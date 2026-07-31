@@ -219,3 +219,18 @@ The first milestone is complete when:
 - README documents general and Zed usage;
 - all work is committed and pushed to the private remote;
 - no known required MVP work remains.
+
+## Milestone implementation status
+
+Completed in the `0.1.0` MVP:
+
+- [x] one-shot and save-based watch CLI modes;
+- [x] loopback-only tokenized HTTP/SSE server with one-tab reloads and position restoration;
+- [x] Pandoc Markdown/standalone LaTeX, MathML plus selective MathJax, Mermaid, highlighted code, and local/Obsidian images;
+- [x] debounced ordinary-write and atomic-save watching;
+- [x] last-successful-render retention, browser/terminal errors, and automatic recovery;
+- [x] canonical-path resource containment, encoded traversal rejection, symlink-escape rejection, and cache busting;
+- [x] deterministic browser-free automated coverage and a representative fixture;
+- [x] complete general, headless, security, troubleshooting, and Zed documentation.
+
+One ambiguity was resolved in favor of recovery: one-shot initial render failures exit immediately with a nonzero status, while watch-mode initial render failures serve an error page and remain alive so a corrected save can recover. A watch process stopped before it ever renders successfully exits nonzero.
