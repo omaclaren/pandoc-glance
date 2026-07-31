@@ -1,8 +1,8 @@
 # pandoc-glance
 
-`pandoc-glance` is a standalone, editor-agnostic CLI for high-fidelity Markdown and LaTeX preview in a web browser. It uses Pandoc for document syntax and MathML, then adds readable light/dark styling, syntax highlighting, Mermaid, selective MathJax fallback, local resources, and save-based live reload.
+`pandoc-glance` renders Markdown and LaTeX files as high-fidelity browser previews. Pandoc handles document conversion; `pandoc-glance` adds theme-aware styling, syntax highlighting, Mermaid, selective MathJax fallback, local resources, and save-based live reload.
 
-It has no Pi or Zed runtime dependency. Zed is one convenient client; any terminal or editor task can run it.
+Run it once to open a generated preview, or use `--watch` to refresh the same browser tab whenever the source file is saved.
 
 ![Dark browser preview showing MathML, highlighted TypeScript, and Mermaid](<docs/screenshots/dark-browser.png>)
 
@@ -19,17 +19,17 @@ brew install pandoc
 
 On Debian/Ubuntu, use `sudo apt install pandoc`. On Windows, use `winget install --id JohnMacFarlane.Pandoc`. If Pandoc is installed elsewhere, set `PANDOC_PATH` to the executable.
 
-## Install from a local checkout
+## Install from source
 
 ```bash
-git clone git@github.com:omaclaren/pandoc-glance.git
+git clone https://github.com/omaclaren/pandoc-glance.git
 cd pandoc-glance
 npm install
 npm run build
 npm link
 ```
 
-The checkout is currently private, and the package has `"private": true`; it is not published to npm. `npm link` exposes the local compiled executable as `pandoc-glance`.
+The package is not published to npm. `npm link` exposes the local compiled executable as `pandoc-glance`.
 
 Without linking, run the compiled CLI directly:
 
@@ -175,9 +175,17 @@ Inline math $x^2$ and display math
 
 Previewing LaTeX does not run a TeX engine; Pandoc converts supported document structure and equations directly to HTML5/MathML.
 
-## Zed task
+## Editor and shell integration
 
-After installing or linking the CLI, add this valid task definition to `.zed/tasks.json` in a project (or to Zed's global tasks file):
+Launch watch mode from any editor or task runner that can invoke a shell command:
+
+```bash
+pandoc-glance --watch "/absolute/path/to/current-file.md"
+```
+
+### Zed
+
+Add this task to `.zed/tasks.json` in a project or to Zed's global tasks file:
 
 ```json
 [
@@ -194,24 +202,16 @@ After installing or linking the CLI, add this valid task definition to `.zed/tas
 ]
 ```
 
-Run **Preview current Markdown/LaTeX file** from Zed's task picker. The watcher sees disk saves; enabling Zed autosave makes the preview feel closer to buffer-live.
+Run **Preview current Markdown/LaTeX file** from Zed's task picker. With autosave enabled, the browser updates shortly after edits.
 
-## Other editor and terminal integrations
+### Other examples
 
-Any editor that can run a shell task can use the same command:
+- VS Code tasks can pass `${file}`.
+- Vim and Neovim commands can pass the current buffer's expanded filename after writing it.
+- Over SSH, use `--watch --no-open` and forward the printed port when remote browser access is needed.
+- Scripts and CI checks can use one-shot `--no-open` without launching a GUI.
 
-```bash
-pandoc-glance --watch "/absolute/path/to/current-file.md"
-```
-
-Examples:
-
-- a VS Code task can pass `${file}`;
-- a Vim/Neovim command can pass the current buffer's expanded filename after writing it;
-- an SSH session can use `--watch --no-open`, then forward the printed port if browser access is needed remotely;
-- scripts and CI checks can use one-shot `--no-open` without launching a GUI.
-
-The server intentionally binds to `127.0.0.1`, so remote access requires an explicit tunnel such as `ssh -L`.
+The server binds to `127.0.0.1`, so remote access requires an explicit tunnel such as `ssh -L`.
 
 ## Network and offline behavior
 
@@ -221,7 +221,7 @@ Pandoc rendering, styling, native MathML, syntax highlighting, resource serving,
 - Lucide and Logos icon-pack JSON from unpkg, loaded lazily only when a diagram references those packs;
 - MathJax 3 from jsDelivr, only when Pandoc could not produce MathML for an equation.
 
-Automated tests do not contact these CDNs. Without network access, ordinary documents and MathML still render; Mermaid remains readable as source code with an in-page error, and unsupported equations remain as TeX with a warning. Fully bundled Mermaid/MathJax/icon packs are outside the first milestone.
+Automated tests do not contact these CDNs. Without network access, ordinary documents and MathML still render; Mermaid remains readable as source code with an in-page error, and unsupported equations remain as TeX with a warning. Mermaid, MathJax, and the icon packs are not currently bundled for offline use.
 
 ## Security model
 
