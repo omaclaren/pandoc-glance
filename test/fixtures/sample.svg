@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="180" viewBox="0 0 480 180" role="img" aria-labelledby="title desc">
+  <title id="title">pi-md-preview fixture</title>
+  <desc id="desc">A small gradient card used to test local image loading.</desc>
+  <defs>
+    <linearGradient id="gradient" x1="0" x2="1">
+      <stop offset="0" stop-color="#0969da"/>
+      <stop offset="1" stop-color="#5ea1ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="480" height="180" rx="18" fill="url(#gradient)"/>
+  <text x="240" y="94" text-anchor="middle" fill="white" font-family="system-ui, sans-serif" font-size="28" font-weight="600">pi-md-preview</text>
+  <text x="240" y="126" text-anchor="middle" fill="#eaf3ff" font-family="system-ui, sans-serif" font-size="16">local image fixture</text>
+</svg>
