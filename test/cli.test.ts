@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { CliArgumentError, helpText, parseCliArgs } from "../src/cli.js";
+
+const execFileAsync = promisify(execFile);
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("CLI argument parsing", () => {
   it("accepts watch options before the input path", () => {
@@ -40,6 +49,22 @@ describe("CLI argument parsing", () => {
     assert.equal(parseCliArgs(["-v"]).action, "version");
     assert.match(helpText(), /^pandoc-glance 0\.1\.0/m);
     assert.match(helpText(), /pandoc-glance --watch \[options\] <file>/);
+  });
+
+  it("runs when invoked through an npm-style symlink", async () => {
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), "pandoc-glance-entrypoint-"));
+    const linkedCli = join(temporaryDirectory, "pandoc-glance");
+    await symlink(join(repositoryRoot, "src", "cli.ts"), linkedCli);
+    try {
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        ["--import", "tsx", linkedCli, "--version"],
+        { cwd: repositoryRoot },
+      );
+      assert.equal(stdout.trim(), "0.1.0");
+    } finally {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 
   it("rejects missing or multiple input paths", () => {

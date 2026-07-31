@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 import { createHash, randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile, readdir, mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { openInDefaultBrowser } from "./browser.js";
 import {
   assertPandocAvailable,
@@ -376,8 +377,9 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 }
 
-const entryPoint = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
-if (entryPoint === import.meta.url) {
+const entryPoint = process.argv[1] ? realpathSync(resolve(process.argv[1])) : "";
+const modulePath = realpathSync(fileURLToPath(import.meta.url));
+if (entryPoint === modulePath) {
   void runCli(process.argv.slice(2)).then((exitCode) => {
     process.exitCode = exitCode;
   });
