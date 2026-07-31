@@ -65,7 +65,7 @@ pandoc-glance notes.md
 pandoc-glance paper.tex --theme light --font-size 16
 ```
 
-One-shot mode renders an HTML file in a bounded user cache and opens it in the system default browser. It reuses a stable cache path for the same input/options and keeps at most 30 generated HTML files.
+One-shot mode writes a cached HTML file and opens it in the default browser. The cache keeps at most 30 previews.
 
 For headless or SSH use:
 
@@ -84,15 +84,12 @@ pandoc-glance --watch --no-open --port 0 notes.md
 
 Watch mode:
 
-- opens one browser tab at startup and updates that tab through server-sent events (SSE);
-- handles ordinary writes and editor atomic-save/rename patterns;
-- debounces rapid saves;
-- preserves the nearest stable heading/block anchor, with scroll ratio as a fallback;
-- keeps the last successful document visible when a later render fails;
-- shows the current error in the browser and terminal, then recovers after a corrected save; and
-- closes the watcher, SSE clients, and HTTP server on Ctrl-C or SIGTERM.
+- Opens one browser tab and updates it after each saved change.
+- Handles ordinary writes and atomic saves.
+- Preserves reading position across reloads.
+- Keeps the last successful preview visible after a render error and recovers on the next valid save.
 
-Watching is **save-based**. It reads the file on disk and cannot see an editor's unsaved buffer. Enabling editor autosave makes updates feel more immediate. If the initial watch render fails, the CLI serves an error page and remains active, so a subsequent save can recover; if it is stopped before any successful render, it exits nonzero.
+Watch mode sees files on disk, not unsaved editor buffers. Enable autosave for faster updates. If the initial render fails, the error page stays open and waits for a valid save. Stop the server with Ctrl-C.
 
 ## Rendering examples
 
@@ -114,7 +111,7 @@ $$
 \]
 ```
 
-Pandoc emits native MathML where it can. If Pandoc leaves unsupported TeX as a `.math` fallback span, the browser loads MathJax selectively rather than typesetting the whole document with JavaScript.
+Pandoc emits native MathML when possible. The browser loads MathJax only for equations that Pandoc leaves as TeX.
 
 ### Mermaid
 
@@ -126,24 +123,20 @@ flowchart LR
 ```
 ````
 
-Mermaid is loaded only when a `mermaid` fence is present.
+Mermaid runs in the preview page and loads only when a `mermaid` fence is present. No local Mermaid package or Mermaid CLI (`mmdc`) is required.
 
-Flowcharts also support `lucide:*` and `logos:*` icon nodes. Keep each icon metadata declaration on one source line:
+Flowchart icon nodes support `lucide:*` and `logos:*`. Keep each icon declaration on one source line:
 
 ````markdown
 ```mermaid
 flowchart LR
-  source@{ icon: "lucide:file-code-2", form: "rounded", label: "Source", pos: "b", h: 56 }
-  github@{ icon: "logos:github-icon", form: "rounded", label: "GitHub", pos: "b", h: 56 }
-  source -->|publish| github
-  classDef unchanged fill:#f8f9fa,stroke:#868e96,stroke-width:2px
-  classDef changed fill:#f3f0ff,stroke:#7950f2,stroke-width:2px
-  class source unchanged
-  class github changed
+  source@{ icon: "lucide:file-code-2", label: "Source" }
+  github@{ icon: "logos:github-icon", label: "GitHub" }
+  source --> github
 ```
 ````
 
-The browser loads icon-pack JSON lazily from unpkg only when a diagram references that prefix. It adjusts icon and node-label colors against their rendered backgrounds for readable light and dark previews. If Mermaid or an icon pack cannot load, the page shows an error alongside the original diagram source.
+If Mermaid or an icon pack cannot load, the preview shows the error and the original diagram source.
 
 ### Local resources and Obsidian images
 
@@ -155,7 +148,7 @@ Relative paths resolve from the source document's directory:
 ![[figures/result.png|Obsidian-style caption]]
 ```
 
-Absolute local image paths are also supported. In watch mode, in-directory paths go through the restricted resource endpoint; explicitly referenced absolute files outside that directory receive opaque, per-render allowlisted URLs. Browser resource URLs include a render revision and use `Cache-Control: no-store`, so saved image changes do not remain stale.
+Absolute local image paths are also supported. Watch mode uses revisioned, non-cached resource URLs so saved image changes appear immediately.
 
 ### Standalone LaTeX
 
@@ -213,28 +206,27 @@ Run **Preview current Markdown/LaTeX file** from Zed's task picker. With autosav
 
 The server binds to `127.0.0.1`, so remote access requires an explicit tunnel such as `ssh -L`.
 
-## Network and offline behavior
+## Network use
 
-Pandoc rendering, styling, native MathML, syntax highlighting, resource serving, and live reload are local. The generated browser page uses external CDNs for optional enhancements:
+Pandoc conversion, styling, native MathML, syntax highlighting, local resources, and live reload are local. The browser downloads these optional components as needed:
 
-- Mermaid 11.16 from jsDelivr, only when Mermaid blocks exist;
-- Lucide and Logos icon-pack JSON from unpkg, loaded lazily only when a diagram references those packs;
-- MathJax 3 from jsDelivr, only when Pandoc could not produce MathML for an equation.
+- Mermaid 11.16 from jsDelivr when the document contains a Mermaid block.
+- Lucide or Logos icon data from unpkg when a diagram uses that pack.
+- MathJax 3 from jsDelivr when Pandoc leaves an equation as TeX.
 
-Automated tests do not contact these CDNs. Without network access, ordinary documents and MathML still render; Mermaid remains readable as source code with an in-page error, and unsupported equations remain as TeX with a warning. Mermaid, MathJax, and the icon packs are not currently bundled for offline use.
+Without network access, the core preview still works. Mermaid remains visible as source with an error, and unsupported equations remain as TeX with a warning.
 
 ## Security model
 
 Watch mode:
 
-- listens on IPv4 loopback (`127.0.0.1`) only;
-- uses a random 192-bit token in every preview route;
-- sends `no-store`, `nosniff`, no-referrer, same-origin, and content-security headers;
-- serves relative resources only after lexical and canonical (`realpath`) containment checks;
-- rejects plain, URL-encoded, and repeatedly encoded `..` traversal, absolute resource-endpoint paths, directories, and symlinks escaping the source directory; and
-- exposes out-of-root absolute files only when the current successful document explicitly references them, through opaque IDs with no arbitrary-path API.
+- Binds only to `127.0.0.1`.
+- Uses a random 192-bit token in every preview route.
+- Sets `no-store`, `nosniff`, no-referrer, same-origin, and content-security headers.
+- Rejects path traversal, including encoded `..` and symlinks outside the source directory.
+- Serves an outside absolute file only when the current document explicitly references it, through an opaque ID.
 
-A failed re-render does not replace either the previous HTML or its resource allowlist.
+A failed render keeps the previous HTML and resource allowlist.
 
 ## Troubleshooting
 
@@ -285,7 +277,7 @@ npm test
 npm run build
 ```
 
-The test suite uses Node's test runner and real Pandoc integration. It does not open a browser or require public-network access. Coverage includes CLI parsing, Markdown/LaTeX rendering, all required math delimiters, syntax highlighting, Mermaid icon wiring, local resources, watch startup, SSE revisions, atomic saves, render-error recovery, traversal/symlink defenses, and clean shutdown.
+The test suite uses real Pandoc but does not open a browser or access the public network.
 
 A representative fixture is available at [`test/fixtures/sample.md`](test/fixtures/sample.md), with a standalone LaTeX companion at [`test/fixtures/sample.tex`](test/fixtures/sample.tex).
 
