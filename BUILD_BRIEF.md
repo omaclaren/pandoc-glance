@@ -10,7 +10,7 @@ pandoc-glance --watch "$ZED_FILE"
 
 The differentiator is not merely “Markdown in a browser.” It is the high-fidelity document pipeline already proven in `pi-markdown-preview`: Pandoc syntax handling, robust math/LaTeX, Mermaid, syntax highlighting, local resources, and good light/dark styling.
 
-Build a working MVP, verify it, commit it, and push it to the private GitHub remote. Do not stop at a design or skeleton.
+Build a working MVP, verify it, commit it, and push it to the GitHub remote. Do not stop at a design or skeleton.
 
 ## Product behavior
 
@@ -130,7 +130,7 @@ src/
 
 The executable should be exposed as `pandoc-glance` through `package.json#bin`, include a portable Node shebang, and run from compiled `dist` output. Do not require Pi packages at runtime.
 
-Use package version `0.1.0` initially and protect against accidental publication while the repository remains private.
+Use package version `0.1.0` for the first public release. Before publication, run the full checks, inspect the package dry run, and verify installation from the packed tarball.
 
 ## Testing and verification
 
@@ -202,8 +202,8 @@ Structure the rendering core so exports and additional frontends can be added la
 - Work only in `~/Git-Working/pandoc-glance`.
 - Reference repositories are read-only.
 - Do not alter global Pi/npm/Git settings.
-- Do not publish anything publicly or to npm.
-- The GitHub repository is already private and `origin` uses SSH.
+- npm releases and repository visibility changes require explicit owner approval.
+- The GitHub repository is public and `origin` uses SSH.
 - Make coherent commits and push tested milestones to `origin/main`.
 
 ## Completion checklist
@@ -217,7 +217,7 @@ The first milestone is complete when:
 - loopback/resource security is covered;
 - build, typecheck, tests, and headless smoke test pass;
 - README documents general and Zed usage;
-- all work is committed and pushed to the private remote;
+- all work is committed and pushed to the remote;
 - no known required MVP work remains.
 
 ## Milestone implementation status

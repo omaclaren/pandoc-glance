@@ -22,7 +22,7 @@ Treat both repositories as read-only. Do not edit, commit, install from, or chan
 - Commit `package-lock.json` and keep `npm run typecheck` working.
 - Tests must be deterministic and must not open a browser or require public-network access.
 - Bind preview servers to loopback only and test path traversal protections.
-- Do not publish to npm or make a release. The repository is private during development.
+- Treat npm publishing as an explicit release operation: obtain owner approval, run the full checks and package-install smoke test, and verify the published package afterward.
 - Make coherent commits and push working milestones to `origin/main`.
 - Do not inspect, print, copy, or commit credentials or secret configuration files.
 
