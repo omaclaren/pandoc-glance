@@ -360,7 +360,7 @@ export class PreviewServer {
       response.writeHead(200, {
         ...securityHeaders(),
         "Content-Type": "text/html; charset=utf-8",
-        "Content-Security-Policy": "default-src 'self' data: https://cdn.jsdelivr.net; img-src 'self' data: https:; media-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self'; object-src 'none'; base-uri 'none'",
+        "Content-Security-Policy": "default-src 'self' data: https://cdn.jsdelivr.net; img-src 'self' data: https:; media-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' https://unpkg.com; object-src 'none'; base-uri 'none'",
       });
       if (request.method === "HEAD") response.end();
       else response.end(this.#html);

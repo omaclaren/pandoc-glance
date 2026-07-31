@@ -280,6 +280,20 @@ body {
 }
 #preview-root .mermaid-container { margin: 1.1em 0; overflow-x: auto; text-align: center; }
 #preview-root .mermaid-container svg { max-width: 100%; height: auto; }
+#preview-root .mermaid-error {
+  padding: 12px 14px;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  background: var(--panel);
+  text-align: left;
+}
+#preview-root .mermaid-error-message {
+  margin-bottom: 0.75em;
+  color: var(--error);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+#preview-root .mermaid-error .mermaid-source { margin: 0; }
 .preview-warning {
   margin: 1em 0;
   padding: 10px 12px;

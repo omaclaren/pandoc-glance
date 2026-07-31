@@ -79,7 +79,12 @@ describe("Pandoc rendering", () => {
     assert.ok((rendered.fragmentHtml.match(/src="sample\.svg"/g) ?? []).length >= 2);
     assert.match(rendered.html, /<base href="file:/);
     assert.match(rendered.html, /prefers-color-scheme: dark/);
-    assert.match(rendered.html, /mermaid@11/);
+    assert.match(rendered.html, /mermaid@11\.16\.0/);
+    assert.match(rendered.html, /mermaid\.registerIconPacks/);
+    assert.match(rendered.html, /@iconify-json\/lucide@1\/icons\.json/);
+    assert.match(rendered.html, /@iconify-json\/logos@1\/icons\.json/);
+    assert.match(rendered.html, /ensureReadableColor/);
+    assert.match(rendered.html, /className = "mermaid-error"/);
     assert.match(rendered.html, /mathjax@3/);
   });
 

@@ -128,6 +128,23 @@ flowchart LR
 
 Mermaid is loaded only when a `mermaid` fence is present.
 
+Flowcharts also support `lucide:*` and `logos:*` icon nodes. Keep each icon metadata declaration on one source line:
+
+````markdown
+```mermaid
+flowchart LR
+  source@{ icon: "lucide:file-code-2", form: "rounded", label: "Source", pos: "b", h: 56 }
+  github@{ icon: "logos:github-icon", form: "rounded", label: "GitHub", pos: "b", h: 56 }
+  source -->|publish| github
+  classDef unchanged fill:#f8f9fa,stroke:#868e96,stroke-width:2px
+  classDef changed fill:#f3f0ff,stroke:#7950f2,stroke-width:2px
+  class source unchanged
+  class github changed
+```
+````
+
+The browser loads icon-pack JSON lazily from unpkg only when a diagram references that prefix. It adjusts icon and node-label colors against their rendered backgrounds for readable light and dark previews. If Mermaid or an icon pack cannot load, the page shows an error alongside the original diagram source.
+
 ### Local resources and Obsidian images
 
 Relative paths resolve from the source document's directory:
@@ -198,12 +215,13 @@ The server intentionally binds to `127.0.0.1`, so remote access requires an expl
 
 ## Network and offline behavior
 
-Pandoc rendering, styling, native MathML, syntax highlighting, resource serving, and live reload are local. The generated browser page uses jsDelivr for two optional enhancements:
+Pandoc rendering, styling, native MathML, syntax highlighting, resource serving, and live reload are local. The generated browser page uses external CDNs for optional enhancements:
 
-- Mermaid 11, only when Mermaid blocks exist;
-- MathJax 3, only when Pandoc could not produce MathML for an equation.
+- Mermaid 11.16 from jsDelivr, only when Mermaid blocks exist;
+- Lucide and Logos icon-pack JSON from unpkg, loaded lazily only when a diagram references those packs;
+- MathJax 3 from jsDelivr, only when Pandoc could not produce MathML for an equation.
 
-Automated tests do not contact either CDN. Without network access, ordinary documents and MathML still render; Mermaid remains readable as source code and unsupported equations remain as TeX with an in-page warning. Fully bundled Mermaid/MathJax is outside the first milestone.
+Automated tests do not contact these CDNs. Without network access, ordinary documents and MathML still render; Mermaid remains readable as source code with an in-page error, and unsupported equations remain as TeX with a warning. Fully bundled Mermaid/MathJax/icon packs are outside the first milestone.
 
 ## Security model
 
@@ -267,7 +285,7 @@ npm test
 npm run build
 ```
 
-The test suite uses Node's test runner and real Pandoc integration. It does not open a browser or require public-network access. Coverage includes CLI parsing, Markdown/LaTeX rendering, all required math delimiters, syntax highlighting, Mermaid markup, local resources, watch startup, SSE revisions, atomic saves, render-error recovery, traversal/symlink defenses, and clean shutdown.
+The test suite uses Node's test runner and real Pandoc integration. It does not open a browser or require public-network access. Coverage includes CLI parsing, Markdown/LaTeX rendering, all required math delimiters, syntax highlighting, Mermaid icon wiring, local resources, watch startup, SSE revisions, atomic saves, render-error recovery, traversal/symlink defenses, and clean shutdown.
 
 A representative fixture is available at [`test/fixtures/sample.md`](test/fixtures/sample.md), with a standalone LaTeX companion at [`test/fixtures/sample.tex`](test/fixtures/sample.tex).
 

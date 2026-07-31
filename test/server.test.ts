@@ -138,6 +138,10 @@ describe("preview HTTP server", () => {
     assert.equal(documentResponse.status, 200);
     assert.equal(await documentResponse.text(), "<!doctype html><title>ok</title>");
     assert.equal(documentResponse.headers.get("cache-control"), "no-store");
+    assert.match(
+      documentResponse.headers.get("content-security-policy") ?? "",
+      /connect-src 'self' https:\/\/unpkg\.com/,
+    );
 
     const origin = new URL(server.url).origin;
     assert.equal((await fetch(`${origin}/`)).status, 404);

@@ -53,6 +53,11 @@ const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".qmd
 const LATEX_EXTENSIONS = new Set([".tex", ".latex"]);
 const PANDOC_OUTPUT_LIMIT_BYTES = 50 * 1024 * 1024;
 const PANDOC_TIMEOUT_MS = 30_000;
+const MERMAID_BROWSER_VERSION = "11.16.0";
+const MERMAID_BROWSER_ICON_PACKS = [
+  { name: "lucide", url: "https://unpkg.com/@iconify-json/lucide@1/icons.json" },
+  { name: "logos", url: "https://unpkg.com/@iconify-json/logos@1/icons.json" },
+] as const;
 
 export class PandocError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -474,6 +479,187 @@ async function rewriteServerResourceUrls(
   return { html: rewrittenHtml, assets };
 }
 
+// Adapted from pi-markdown-preview's MIT-licensed Mermaid icon and contrast handling.
+function buildMermaidClientSource(): string {
+  const mermaidUrlJson = escapeJsonForScript(
+    `https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_BROWSER_VERSION}/dist/mermaid.esm.min.mjs`,
+  );
+  const iconPacksJson = escapeJsonForScript(MERMAID_BROWSER_ICON_PACKS);
+
+  return String.raw`
+  function setMermaidRenderResult(status, error) {
+    window.__mermaidRenderResult = error ? { status, error } : { status };
+  }
+
+  function renderMermaidFailure(entries, message) {
+    entries.forEach((entry) => {
+      const failure = document.createElement("div");
+      failure.className = "mermaid-error";
+      failure.setAttribute("role", "alert");
+
+      const summary = document.createElement("div");
+      summary.className = "mermaid-error-message";
+      summary.textContent = "Mermaid render failed: " + message;
+
+      const source = document.createElement("pre");
+      source.className = "mermaid-source";
+      const code = document.createElement("code");
+      code.textContent = entry.source;
+      source.appendChild(code);
+      failure.append(summary, source);
+      entry.wrapper.replaceChildren(failure);
+    });
+  }
+
+  async function renderMermaid() {
+    if (!root) {
+      setMermaidRenderResult("skipped");
+      return;
+    }
+    const blocks = Array.from(root.querySelectorAll("pre.mermaid"));
+    if (blocks.length === 0) {
+      setMermaidRenderResult("skipped");
+      return;
+    }
+
+    setMermaidRenderResult("pending");
+    const entries = blocks.map((pre) => {
+      const code = pre.querySelector("code");
+      const source = String(code ? code.textContent : pre.textContent || "");
+      const wrapper = document.createElement("div");
+      wrapper.className = "mermaid-container";
+      const diagram = document.createElement("div");
+      diagram.className = "mermaid";
+      diagram.textContent = source;
+      wrapper.appendChild(diagram);
+      pre.replaceWith(wrapper);
+      return { wrapper, diagram, source };
+    });
+
+    try {
+      const module = await import(${mermaidUrlJson});
+      const mermaid = module && module.default;
+      if (!mermaid) throw new Error("Mermaid did not expose a default export.");
+
+      const packs = ${iconPacksJson};
+      const pending = new Map();
+      let iconPackError = null;
+      const load = (pack) => {
+        if (!pending.has(pack.name)) {
+          pending.set(pack.name, fetch(pack.url).then((response) => {
+            if (!response.ok) {
+              throw new Error("Failed to load Mermaid icon pack " + pack.name + ": HTTP " + response.status);
+            }
+            return response.json();
+          }).catch((error) => {
+            iconPackError = iconPackError || (error instanceof Error ? error : new Error(String(error)));
+            throw error;
+          }));
+        }
+        return pending.get(pack.name);
+      };
+
+      mermaid.registerIconPacks(packs.map((pack) => ({ name: pack.name, loader: () => load(pack) })));
+      mermaid.initialize(mermaidConfig());
+      await mermaid.run({ nodes: entries.map((entry) => entry.diagram) });
+      if (iconPackError) throw iconPackError;
+
+      const parseRgb = (value) => {
+        const match = value.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/);
+        return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+      };
+      const isOpaqueColor = (value) => {
+        if (!parseRgb(value)) return false;
+        const alphaMatch = value.match(/^rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)$/);
+        return !alphaMatch || Number(alphaMatch[1]) >= 1;
+      };
+      const findOpaqueFill = (element) => {
+        if (!(element instanceof Element)) return null;
+        const shape = Array.from(element.querySelectorAll("rect, polygon, path, circle, ellipse")).find((candidate) => {
+          return isOpaqueColor(getComputedStyle(candidate).fill);
+        });
+        return shape ? getComputedStyle(shape).fill : null;
+      };
+      const findOpaqueBackground = (element, fallback) => {
+        let current = element instanceof Element ? element : null;
+        while (current) {
+          const background = getComputedStyle(current).backgroundColor;
+          if (current instanceof HTMLElement && isOpaqueColor(background)) return background;
+          current = current.parentElement;
+        }
+        return fallback;
+      };
+      const relativeLuminance = (color) => {
+        const linear = color.map((channel) => {
+          const value = channel / 255;
+          return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+      };
+      const contrastRatio = (foreground, background) => {
+        const lighter = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+        const darker = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+        return (lighter + 0.05) / (darker + 0.05);
+      };
+      const toRgb = (color) => "rgb(" + color.map((channel) => Math.round(channel)).join(", ") + ")";
+      const ensureReadableColor = (foregroundCss, backgroundCss) => {
+        const foreground = parseRgb(foregroundCss);
+        const background = parseRgb(backgroundCss);
+        if (!foreground || !background || contrastRatio(foreground, background) >= 4.5) return foregroundCss;
+        const readableCandidates = [[0, 0, 0], [255, 255, 255]].flatMap((target) => {
+          for (let step = 1; step <= 20; step += 1) {
+            const amount = step / 20;
+            const color = foreground.map((channel, index) => channel + (target[index] - channel) * amount);
+            if (contrastRatio(color, background) >= 4.5) return [{ amount, color }];
+          }
+          return [];
+        });
+        readableCandidates.sort((left, right) => left.amount - right.amount);
+        if (readableCandidates.length > 0) return toRgb(readableCandidates[0].color);
+        const black = [0, 0, 0];
+        const white = [255, 255, 255];
+        return toRgb(contrastRatio(black, background) >= contrastRatio(white, background) ? black : white);
+      };
+
+      const pageBackground = getComputedStyle(document.body).backgroundColor;
+      root.querySelectorAll(".mermaid-container .icon-shape").forEach((node) => {
+        const icon = node.querySelector("svg");
+        if (!icon) return;
+        const semanticColor = getComputedStyle(icon).color;
+        const iconSurface = findOpaqueFill(node.firstElementChild)
+          || findOpaqueBackground(icon, pageBackground);
+        icon.style.setProperty("color", ensureReadableColor(semanticColor, iconSurface), "important");
+        node.querySelectorAll(".labelBkg, .nodeLabel").forEach((label) => {
+          if (!(label instanceof HTMLElement)) return;
+          const labelSurface = findOpaqueBackground(label, pageBackground);
+          label.style.setProperty("color", ensureReadableColor(semanticColor, labelSurface), "important");
+        });
+      });
+      root.querySelectorAll(".mermaid-container .node:not(.icon-shape)").forEach((node) => {
+        const shape = Array.from(node.querySelectorAll("rect, polygon, path, circle, ellipse")).find((candidate) => {
+          const fill = getComputedStyle(candidate).fill;
+          return fill && fill !== "none" && fill !== "rgba(0, 0, 0, 0)";
+        });
+        if (!shape) return;
+        const shapeFill = getComputedStyle(shape).fill;
+        node.querySelectorAll(".nodeLabel").forEach((label) => {
+          if (!(label instanceof HTMLElement)) return;
+          const labelColor = ensureReadableColor(getComputedStyle(label).color, shapeFill);
+          label.style.setProperty("color", labelColor, "important");
+        });
+      });
+      setMermaidRenderResult("success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setMermaidRenderResult("failed", message);
+      renderMermaidFailure(entries, message);
+      appendWarning("preview-mermaid-warning", "Mermaid is unavailable. Showing the diagram source as code.");
+      console.error("Mermaid render failed:", error);
+    }
+  }
+`;
+}
+
 function buildClientScript(theme: PreviewTheme, liveReload?: LiveReloadConfig): string {
   const clientConfig = {
     theme,
@@ -486,7 +672,6 @@ function buildClientScript(theme: PreviewTheme, liveReload?: LiveReloadConfig): 
 (() => {
   "use strict";
   const CONFIG = ${configJson};
-  const MERMAID_CDN_URL = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
   const MATHJAX_CDN_URL = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js";
   const root = document.getElementById("preview-root");
   const status = document.getElementById("preview-status");
@@ -604,31 +789,7 @@ function buildClientScript(theme: PreviewTheme, liveReload?: LiveReloadConfig): 
     };
   }
 
-  async function renderMermaid() {
-    if (!root) return;
-    const blocks = Array.from(root.querySelectorAll("pre.mermaid"));
-    if (blocks.length === 0) return;
-    try {
-      const module = await import(MERMAID_CDN_URL);
-      const mermaid = module && module.default;
-      if (!mermaid) throw new Error("Mermaid did not expose a default export.");
-      mermaid.initialize(mermaidConfig());
-      blocks.forEach((pre) => {
-        const source = pre.querySelector("code") ? pre.querySelector("code").textContent : pre.textContent;
-        const wrapper = document.createElement("div");
-        wrapper.className = "mermaid-container";
-        const diagram = document.createElement("div");
-        diagram.className = "mermaid";
-        diagram.textContent = source || "";
-        wrapper.appendChild(diagram);
-        pre.replaceWith(wrapper);
-      });
-      await mermaid.run({ nodes: Array.from(root.querySelectorAll(".mermaid")) });
-    } catch (error) {
-      console.error("Mermaid render failed:", error);
-      appendWarning("preview-mermaid-warning", "Mermaid is unavailable. Showing the diagram source as code.");
-    }
-  }
+${buildMermaidClientSource()}
 
   function fallbackMathTargets() {
     if (!root) return [];
