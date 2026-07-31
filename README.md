@@ -1,10 +1,8 @@
 # pandoc-glance
 
-`pandoc-glance` renders Markdown and LaTeX files as high-fidelity browser previews. Pandoc handles document conversion; `pandoc-glance` adds theme-aware styling, syntax highlighting, Mermaid, selective MathJax fallback, local resources, and save-based live reload.
+`pandoc-glance` renders Markdown and LaTeX files as good-looking pages in your browser. Add `--watch` to refresh the page whenever you save.
 
-Run it once to open a generated preview, or use `--watch` to refresh the same browser tab whenever the source file is saved.
-
-![Dark browser preview showing MathML, highlighted TypeScript, and Mermaid](<docs/screenshots/dark-browser.png>)
+![Dark browser preview showing MathML, highlighted TypeScript, and Mermaid](https://raw.githubusercontent.com/omaclaren/pandoc-glance/main/docs/screenshots/dark-browser.png)
 
 ## Prerequisites
 
@@ -19,22 +17,10 @@ brew install pandoc
 
 On Debian/Ubuntu, use `sudo apt install pandoc`. On Windows, use `winget install --id JohnMacFarlane.Pandoc`. If Pandoc is installed elsewhere, set `PANDOC_PATH` to the executable.
 
-## Install from source
+## Install
 
 ```bash
-git clone https://github.com/omaclaren/pandoc-glance.git
-cd pandoc-glance
-npm install
-npm run build
-npm link
-```
-
-The package is not published to npm. `npm link` exposes the local compiled executable as `pandoc-glance`.
-
-Without linking, run the compiled CLI directly:
-
-```bash
-node dist/cli.js --no-open README.md
+npm install --global pandoc-glance
 ```
 
 ## Usage

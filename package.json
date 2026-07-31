@@ -1,9 +1,8 @@
 {
   "name": "pandoc-glance",
   "version": "0.1.0",
-  "description": "High-fidelity, editor-agnostic browser preview for Markdown and LaTeX",
+  "description": "Render Markdown and LaTeX files in the browser with live reload",
   "type": "module",
-  "private": true,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -12,7 +11,7 @@
   },
   "types": "./dist/index.d.ts",
   "bin": {
-    "pandoc-glance": "./dist/cli.js"
+    "pandoc-glance": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -26,15 +25,33 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts"
+    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omaclaren/pandoc-glance.git"
+  },
+  "homepage": "https://github.com/omaclaren/pandoc-glance#readme",
+  "bugs": {
+    "url": "https://github.com/omaclaren/pandoc-glance/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "markdown",
     "latex",
     "pandoc",
     "preview",
+    "browser",
+    "live-reload",
+    "mermaid",
+    "mathml",
     "cli"
   ],
+  "author": "Oliver MacLaren",
   "license": "MIT",
   "dependencies": {
     "chokidar": "^4.0.3"
