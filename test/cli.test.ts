@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CliArgumentError, parseCliArgs } from "../src/cli.js";
+import { CliArgumentError, helpText, parseCliArgs } from "../src/cli.js";
 
 describe("CLI argument parsing", () => {
   it("accepts watch options before the input path", () => {
@@ -38,6 +38,8 @@ describe("CLI argument parsing", () => {
   it("recognizes help and version without an input file", () => {
     assert.equal(parseCliArgs(["--help"]).action, "help");
     assert.equal(parseCliArgs(["-v"]).action, "version");
+    assert.match(helpText(), /^pandoc-glance 0\.1\.0/m);
+    assert.match(helpText(), /pandoc-glance --watch \[options\] <file>/);
   });
 
   it("rejects missing or multiple input paths", () => {

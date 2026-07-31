@@ -1,11 +1,11 @@
-# Build Brief: `pi-md-preview`
+# Build Brief: `pandoc-glance`
 
 ## Objective
 
 Create a polished standalone CLI that renders a local Markdown or LaTeX document in a browser. It should work from any shell or editor. Zed is an initial client, not a runtime dependency:
 
 ```bash
-pi-md-preview --watch "$ZED_FILE"
+pandoc-glance --watch "$ZED_FILE"
 ```
 
 The differentiator is not merely “Markdown in a browser.” It is the high-fidelity document pipeline already proven in `pi-markdown-preview`: Pandoc syntax handling, robust math/LaTeX, Mermaid, syntax highlighting, local resources, and good light/dark styling.
@@ -17,14 +17,14 @@ Build a working MVP, verify it, commit it, and push it to the private GitHub rem
 Support both common argument orders:
 
 ```bash
-pi-md-preview notes.md
-pi-md-preview --watch notes.md
-pi-md-preview notes.md --watch
+pandoc-glance notes.md
+pandoc-glance --watch notes.md
+pandoc-glance notes.md --watch
 ```
 
 ### One-shot mode
 
-`pi-md-preview <file>` should:
+`pandoc-glance <file>` should:
 
 1. Validate and read the file.
 2. Auto-detect Markdown versus standalone LaTeX from the extension unless overridden.
@@ -36,7 +36,7 @@ With `--no-open`, do not launch anything; print the generated HTML path clearly.
 
 ### Watch mode
 
-`pi-md-preview --watch <file>` should:
+`pandoc-glance --watch <file>` should:
 
 1. Bind an HTTP server to `127.0.0.1` only, using an available random port by default.
 2. Use a hard-to-guess tokenized URL or equivalently narrow local access design.
@@ -89,14 +89,14 @@ The MVP should preserve or deliberately document these capabilities:
 - standalone `.tex`/`.latex` input
 - MathML with selective MathJax fallback where required
 - fenced-code syntax highlighting
-- Mermaid diagrams
+- Mermaid diagrams, including lazy Lucide/Logos icon packs
 - relative and absolute local images/resources
 - Obsidian image syntax if it can be retained without broad scope
 - readable theme-aware typography and code blocks
 
 Use the source file’s directory as the default resource root. Serve or embed local resources safely. Requests must not escape the allowed resource root through `..`, URL encoding, or symlink tricks. Avoid stale browser-cached local images after rerenders.
 
-The current reference implementation loads Mermaid and selective MathJax fallback from a CDN. For the MVP, retaining that behavior is acceptable if clearly documented. Basic rendering and automated tests must still work without network access. Do not make bundling large browser libraries block the MVP.
+The current reference implementation loads Mermaid, optional icon packs, and selective MathJax fallback from CDNs. For the MVP, retaining that behavior is acceptable if clearly documented. Basic rendering and automated tests must still work without network access. Do not make bundling large browser libraries block the MVP.
 
 Pandoc remains an explicit prerequisite. Detect it early and provide platform-appropriate installation guidance. Support `PANDOC_PATH` if the reference implementation does.
 
@@ -128,7 +128,7 @@ src/
   styles.ts           independent palettes/CSS inputs
 ```
 
-The executable should be exposed as `pi-md-preview` through `package.json#bin`, include a portable Node shebang, and run from compiled `dist` output. Do not require Pi packages at runtime.
+The executable should be exposed as `pandoc-glance` through `package.json#bin`, include a portable Node shebang, and run from compiled `dist` output. Do not require Pi packages at runtime.
 
 Use package version `0.1.0` initially and protect against accidental publication while the repository remains private.
 
@@ -159,7 +159,7 @@ npm run build
 Also perform a headless smoke test resembling:
 
 ```bash
-pi-md-preview --watch --no-open test/fixtures/sample.md
+pandoc-glance --watch --no-open test/fixtures/sample.md
 ```
 
 Fetch the printed loopback URL, verify rendered content, modify a temporary copy, verify a reload/revision, and terminate cleanly.
@@ -193,13 +193,13 @@ Do not let these delay the MVP:
 - multiple documents in one server process
 - PDF/PNG export or terminal image rendering
 - npm publication/release automation
-- fully offline bundled Mermaid/MathJax
+- fully offline bundled Mermaid/MathJax/icon packs
 
 Structure the rendering core so exports and additional frontends can be added later, but do not prematurely migrate every feature from `pi-markdown-preview`.
 
 ## Repository and workflow constraints
 
-- Work only in `~/Git-Working/pi-md-preview`.
+- Work only in `~/Git-Working/pandoc-glance`.
 - Reference repositories are read-only.
 - Do not alter global Pi/npm/Git settings.
 - Do not publish anything publicly or to npm.
@@ -226,7 +226,7 @@ Completed in the `0.1.0` MVP:
 
 - [x] one-shot and save-based watch CLI modes;
 - [x] loopback-only tokenized HTTP/SSE server with one-tab reloads and position restoration;
-- [x] Pandoc Markdown/standalone LaTeX, MathML plus selective MathJax, Mermaid, highlighted code, and local/Obsidian images;
+- [x] Pandoc Markdown/standalone LaTeX, MathML plus selective MathJax, Mermaid with icon packs, highlighted code, and local/Obsidian images;
 - [x] debounced ordinary-write and atomic-save watching;
 - [x] last-successful-render retention, browser/terminal errors, and automatic recovery;
 - [x] canonical-path resource containment, encoded traversal rejection, symlink-escape rejection, and cache busting;

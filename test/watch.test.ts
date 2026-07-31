@@ -72,7 +72,7 @@ function testRenderer(): WatchRenderer {
 }
 
 async function temporarySource(initial: string): Promise<{ directory: string; filePath: string }> {
-  const directory = await mkdtemp(join(tmpdir(), "pi-md-preview-watch-"));
+  const directory = await mkdtemp(join(tmpdir(), "pandoc-glance-watch-"));
   const filePath = join(directory, "notes.md");
   await writeFile(filePath, initial, "utf8");
   return { directory, filePath };

@@ -1,6 +1,6 @@
-# pi-md-preview
+# pandoc-glance
 
-`pi-md-preview` is a standalone, editor-agnostic CLI for high-fidelity Markdown and LaTeX preview in a web browser. It uses Pandoc for document syntax and MathML, then adds readable light/dark styling, syntax highlighting, Mermaid, selective MathJax fallback, local resources, and save-based live reload.
+`pandoc-glance` is a standalone, editor-agnostic CLI for high-fidelity Markdown and LaTeX preview in a web browser. It uses Pandoc for document syntax and MathML, then adds readable light/dark styling, syntax highlighting, Mermaid, selective MathJax fallback, local resources, and save-based live reload.
 
 It has no Pi or Zed runtime dependency. Zed is one convenient client; any terminal or editor task can run it.
 
@@ -22,14 +22,14 @@ On Debian/Ubuntu, use `sudo apt install pandoc`. On Windows, use `winget install
 ## Install from a local checkout
 
 ```bash
-git clone git@github.com:omaclaren/pi-md-preview.git
-cd pi-md-preview
+git clone git@github.com:omaclaren/pandoc-glance.git
+cd pandoc-glance
 npm install
 npm run build
 npm link
 ```
 
-The checkout is currently private, and the package has `"private": true`; it is not published to npm. `npm link` exposes the local compiled executable as `pi-md-preview`.
+The checkout is currently private, and the package has `"private": true`; it is not published to npm. `npm link` exposes the local compiled executable as `pandoc-glance`.
 
 Without linking, run the compiled CLI directly:
 
@@ -40,9 +40,9 @@ node dist/cli.js --no-open README.md
 ## Usage
 
 ```text
-pi-md-preview [options] <file>
-pi-md-preview --watch [options] <file>
-pi-md-preview <file> --watch
+pandoc-glance [options] <file>
+pandoc-glance --watch [options] <file>
+pandoc-glance <file> --watch
 ```
 
 | Option | Meaning |
@@ -61,8 +61,8 @@ Automatic format detection recognizes common Markdown extensions (`.md`, `.markd
 ### One-shot preview
 
 ```bash
-pi-md-preview notes.md
-pi-md-preview paper.tex --theme light --font-size 16
+pandoc-glance notes.md
+pandoc-glance paper.tex --theme light --font-size 16
 ```
 
 One-shot mode renders an HTML file in a bounded user cache and opens it in the system default browser. It reuses a stable cache path for the same input/options and keeps at most 30 generated HTML files.
@@ -70,16 +70,16 @@ One-shot mode renders an HTML file in a bounded user cache and opens it in the s
 For headless or SSH use:
 
 ```bash
-pi-md-preview --no-open notes.md
+pandoc-glance --no-open notes.md
 # HTML: /path/to/cache/<id>.html
 ```
 
 ### Watch mode
 
 ```bash
-pi-md-preview --watch notes.md
-pi-md-preview notes.md --watch --theme auto
-pi-md-preview --watch --no-open --port 0 notes.md
+pandoc-glance --watch notes.md
+pandoc-glance notes.md --watch --theme auto
+pandoc-glance --watch --no-open --port 0 notes.md
 ```
 
 Watch mode:
@@ -183,7 +183,7 @@ After installing or linking the CLI, add this valid task definition to `.zed/tas
 [
   {
     "label": "Preview current Markdown/LaTeX file",
-    "command": "pi-md-preview",
+    "command": "pandoc-glance",
     "args": ["--watch", "$ZED_FILE"],
     "cwd": "$ZED_WORKTREE_ROOT",
     "use_new_terminal": true,
@@ -201,7 +201,7 @@ Run **Preview current Markdown/LaTeX file** from Zed's task picker. The watcher 
 Any editor that can run a shell task can use the same command:
 
 ```bash
-pi-md-preview --watch "/absolute/path/to/current-file.md"
+pandoc-glance --watch "/absolute/path/to/current-file.md"
 ```
 
 Examples:
@@ -249,7 +249,7 @@ pandoc --version
 Or select a binary explicitly:
 
 ```bash
-PANDOC_PATH="/custom/path/pandoc" pi-md-preview notes.md
+PANDOC_PATH="/custom/path/pandoc" pandoc-glance notes.md
 ```
 
 The CLI validates Pandoc before starting and exits nonzero when it is unavailable.
@@ -259,8 +259,8 @@ The CLI validates Pandoc before starting and exits nonzero when it is unavailabl
 Use `--no-open` and open the printed HTML path or URL manually:
 
 ```bash
-pi-md-preview --no-open notes.md
-pi-md-preview --watch --no-open notes.md
+pandoc-glance --no-open notes.md
+pandoc-glance --watch --no-open notes.md
 ```
 
 The CLI uses the operating system default-browser command (`open`, `xdg-open`, or Windows `start`); it does not hard-code a browser.

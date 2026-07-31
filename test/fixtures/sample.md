@@ -1,4 +1,4 @@
-# pi-md-preview sample
+# pandoc-glance sample
 
 This fixture exercises prose, [a link](https://example.invalid), and **Markdown** structure.
 
@@ -33,8 +33,10 @@ const origin: Point = { x: 0, y: 0 };
 
 ```mermaid
 flowchart LR
-  Source[Markdown or LaTeX] --> Pandoc
-  Pandoc --> Browser[Browser preview]
+  source@{ icon: "lucide:file-code-2", form: "rounded", label: "Markdown or LaTeX", pos: "b", h: 56 }
+  pandoc@{ shape: "proc", label: "Pandoc" }
+  browser@{ icon: "lucide:monitor", form: "rounded", label: "Browser preview", pos: "b", h: 56 }
+  source --> pandoc --> browser
 ```
 
 ## Local resources

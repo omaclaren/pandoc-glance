@@ -18,7 +18,7 @@ async function makeFixtureTree(): Promise<{
   secretFile: string;
   symlinkPath: string;
 }> {
-  const temporaryDirectory = await mkdtemp(join(tmpdir(), "pi-md-preview-server-"));
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "pandoc-glance-server-"));
   const root = join(temporaryDirectory, "document");
   await mkdir(join(root, "assets"), { recursive: true });
   const validFile = join(root, "assets", "fixture file.svg");

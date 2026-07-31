@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Build `pi-md-preview`, a standalone, editor-agnostic CLI for high-fidelity Markdown and LaTeX preview in a web browser. The first motivating integration is a Zed task such as `pi-md-preview --watch "$ZED_FILE"`, but the program must not depend on Zed or Pi at runtime.
+Build `pandoc-glance`, a standalone, editor-agnostic CLI for high-fidelity Markdown and LaTeX preview in a web browser. The first motivating integration is a Zed task such as `pandoc-glance --watch "$ZED_FILE"`, but the program must not depend on Zed or Pi at runtime.
 
 ## Reference repositories
 

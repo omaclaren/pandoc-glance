@@ -905,7 +905,7 @@ ${buildMermaidClientSource()}
       try { await document.fonts.ready; } catch {}
     }
     requestAnimationFrame(() => requestAnimationFrame(restoreReadingPosition));
-    window.__piMdPreviewReady = true;
+    window.__pandocGlanceReady = true;
   }
 
   if (CONFIG.theme === "auto" && window.matchMedia) {
@@ -977,7 +977,7 @@ export async function renderDocument(options: RenderDocumentOptions): Promise<Re
 
   const htmlOptions: BuildHtmlOptions = {
     fragmentHtml,
-    title: options.title ?? `${basename(options.sourcePath)} — pi-md-preview`,
+    title: options.title ?? `${basename(options.sourcePath)} — pandoc-glance`,
     theme: options.theme,
     fontSizePx: options.fontSizePx,
   };

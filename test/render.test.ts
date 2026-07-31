@@ -47,7 +47,7 @@ describe("format detection", () => {
 
   it("reports an actionable error when PANDOC_PATH is missing", async () => {
     const previous = process.env.PANDOC_PATH;
-    process.env.PANDOC_PATH = join(tmpdir(), "pi-md-preview-pandoc-does-not-exist");
+    process.env.PANDOC_PATH = join(tmpdir(), "pandoc-glance-pandoc-does-not-exist");
     try {
       await assert.rejects(assertPandocAvailable(), /Pandoc was not found at PANDOC_PATH=.*set PANDOC_PATH/);
     } finally {
@@ -71,13 +71,16 @@ describe("Pandoc rendering", () => {
       fontSizePx: 15,
     });
 
-    assert.match(rendered.fragmentHtml, /<h1 id="pi-md-preview-sample">/);
+    assert.match(rendered.fragmentHtml, /<h1 id="pandoc-glance-sample">/);
     assert.match(rendered.fragmentHtml, /class="sourceCode typescript"/);
     assert.match(rendered.fragmentHtml, /<span class="kw">interface<\/span>/);
     assert.ok((rendered.fragmentHtml.match(/<math\b/g) ?? []).length >= 4, rendered.fragmentHtml);
     assert.match(rendered.fragmentHtml, /<pre class="mermaid">/);
+    assert.match(rendered.fragmentHtml, /lucide:file-code-2/);
     assert.ok((rendered.fragmentHtml.match(/src="sample\.svg"/g) ?? []).length >= 2);
     assert.match(rendered.html, /<base href="file:/);
+    assert.match(rendered.html, /<title>sample\.md — pandoc-glance<\/title>/);
+    assert.match(rendered.html, /window\.__pandocGlanceReady = true/);
     assert.match(rendered.html, /prefers-color-scheme: dark/);
     assert.match(rendered.html, /mermaid@11\.16\.0/);
     assert.match(rendered.html, /mermaid\.registerIconPacks/);
@@ -151,7 +154,7 @@ describe("Pandoc rendering", () => {
 
   it("uses opaque allowlisted URLs for explicitly referenced absolute resources outside the root", async (context) => {
     if (!requirePandoc(context)) return;
-    const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-md-preview-render-"));
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "pandoc-glance-render-"));
     const documentDirectory = join(temporaryRoot, "document");
     const outsideImage = join(temporaryRoot, "outside.svg");
     await import("node:fs/promises").then(({ mkdir }) => mkdir(documentDirectory));
@@ -193,7 +196,7 @@ describe("Pandoc rendering", () => {
     });
     const scriptMatch = rendered.html.match(/<script type="module">([\s\S]*?)<\/script>/);
     assert.ok(scriptMatch);
-    const temporaryDirectory = await mkdtemp(join(tmpdir(), "pi-md-preview-script-"));
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), "pandoc-glance-script-"));
     const scriptPath = join(temporaryDirectory, "client.mjs");
     try {
       await writeFile(scriptPath, scriptMatch[1]!, "utf8");

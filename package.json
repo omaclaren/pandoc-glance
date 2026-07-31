@@ -1,5 +1,5 @@
 {
-  "name": "pi-md-preview",
+  "name": "pandoc-glance",
   "version": "0.1.0",
   "description": "High-fidelity, editor-agnostic browser preview for Markdown and LaTeX",
   "type": "module",
@@ -12,7 +12,7 @@
   },
   "types": "./dist/index.d.ts",
   "bin": {
-    "pi-md-preview": "./dist/cli.js"
+    "pandoc-glance": "./dist/cli.js"
   },
   "files": [
     "dist",

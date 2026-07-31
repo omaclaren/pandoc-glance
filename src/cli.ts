@@ -163,7 +163,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     positional.push(token);
   }
 
-  if (positional.length === 0) throw new CliArgumentError("Missing input file. Run pi-md-preview --help for usage.");
+  if (positional.length === 0) throw new CliArgumentError("Missing input file. Run pandoc-glance --help for usage.");
   if (positional.length > 1) {
     throw new CliArgumentError(`Expected one input file, but received ${positional.length}: ${positional.join(", ")}`);
   }
@@ -181,14 +181,14 @@ export function parseCliArgs(argv: string[]): CliOptions {
 }
 
 export function helpText(): string {
-  return `pi-md-preview ${VERSION}
+  return `pandoc-glance ${VERSION}
 
 High-fidelity Markdown and LaTeX preview in your default browser.
 
 Usage:
-  pi-md-preview [options] <file>
-  pi-md-preview --watch [options] <file>
-  pi-md-preview <file> --watch
+  pandoc-glance [options] <file>
+  pandoc-glance --watch [options] <file>
+  pandoc-glance <file> --watch
 
 Options:
   -w, --watch             Watch the file and refresh the existing browser tab
@@ -218,9 +218,9 @@ async function validateInputFile(inputPath: string): Promise<void> {
 
 function cacheDirectory(): string {
   const xdgCache = process.env.XDG_CACHE_HOME?.trim();
-  if (xdgCache) return join(xdgCache, "pi-md-preview");
-  if (process.platform === "darwin") return join(homedir(), "Library", "Caches", "pi-md-preview");
-  return join(homedir(), ".cache", "pi-md-preview");
+  if (xdgCache) return join(xdgCache, "pandoc-glance");
+  if (process.platform === "darwin") return join(homedir(), "Library", "Caches", "pandoc-glance");
+  return join(homedir(), ".cache", "pandoc-glance");
 }
 
 async function pruneCache(directory: string, keepPath: string): Promise<void> {
@@ -296,7 +296,7 @@ async function runOneShot(options: CliOptions, inputPath: string): Promise<numbe
     format,
     theme: options.theme,
     fontSizePx: options.fontSizePx,
-    title: `${basename(inputPath)} — pi-md-preview`,
+    title: `${basename(inputPath)} — pandoc-glance`,
   });
   for (const warning of rendered.pandocWarnings) process.stderr.write(`Pandoc: ${warning}\n`);
   const outputPath = await writeOneShotHtml(inputPath, rendered.html, options);
@@ -361,7 +361,7 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   if (Number(process.versions.node.split(".")[0]) < 22) {
-    process.stderr.write(`Error: pi-md-preview requires Node.js 22 or newer (found ${process.version}).\n`);
+    process.stderr.write(`Error: pandoc-glance requires Node.js 22 or newer (found ${process.version}).\n`);
     return 1;
   }
 

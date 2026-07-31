@@ -116,7 +116,7 @@ async function defaultRenderer(source: string, context: WatchRenderContext): Pro
     format: context.format,
     theme: context.theme,
     fontSizePx: context.fontSizePx,
-    title: `${basename(context.sourcePath)} — pi-md-preview`,
+    title: `${basename(context.sourcePath)} — pandoc-glance`,
     liveReload: {
       eventsPath: context.eventsPath,
       revision: context.revision,
@@ -164,7 +164,7 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
         eventsPath: server.paths.events,
         resourcePath: server.paths.resource,
         assetPath: server.paths.asset,
-        storageKey: `pi-md-preview:${server.token}`,
+        storageKey: `pandoc-glance:${server.token}`,
       });
       if (closed) return;
       server.publishSuccess(revision, rendered.html, rendered.assets ?? new Map());
@@ -178,14 +178,14 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
       const message = errorMessage(error);
       const initialErrorHtml = server.state.successfulRevision === 0
         ? buildInitialErrorHtml({
-            title: `${basename(inputPath)} — pi-md-preview`,
+            title: `${basename(inputPath)} — pandoc-glance`,
             error: message,
             theme: options.theme,
             fontSizePx: options.fontSizePx,
             liveReload: {
               eventsPath: server.paths.events,
               revision,
-              storageKey: `pi-md-preview:${server.token}`,
+              storageKey: `pandoc-glance:${server.token}`,
             },
           })
         : undefined;
