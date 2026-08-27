@@ -11,6 +11,7 @@ import {
   detectFormat,
   normalizeMathDelimiters,
   renderDocument,
+  stripMarkdownHtmlComments,
 } from "../src/render.js";
 
 const execFileAsync = promisify(execFile);
@@ -110,6 +111,34 @@ describe("Pandoc rendering", () => {
     assert.match(rendered.html, /--preview-font-size: 16px/);
   });
 
+  it("renders Markdown metadata while removing authored HTML comments", async (context) => {
+    if (!requirePandoc(context)) return;
+    const sourcePath = join(fixtureDirectory, "metadata.qmd");
+    const rendered = await renderDocument({
+      source: [
+        "---",
+        "title: Assignment preview",
+        "author: Test Author",
+        "---",
+        "",
+        "<!-- private drafting note -->",
+        "",
+        "# Visible body",
+      ].join("\n"),
+      sourcePath,
+      resourceRoot: fixtureDirectory,
+      format: "markdown",
+      theme: "auto",
+      fontSizePx: 15,
+    });
+
+    assert.match(rendered.fragmentHtml, /<header id="title-block-header">/);
+    assert.match(rendered.fragmentHtml, /<h1 class="title">Assignment preview<\/h1>/);
+    assert.match(rendered.fragmentHtml, /<p class="author">Test Author<\/p>/);
+    assert.match(rendered.fragmentHtml, /<h1 id="visible-body">Visible body<\/h1>/);
+    assert.doesNotMatch(rendered.fragmentHtml, /private drafting note|&lt;!|--&gt;/);
+  });
+
   it("does not misinterpret plain escaped brackets and parentheses as math", async (context) => {
     if (!requirePandoc(context)) return;
     const sourcePath = join(fixtureDirectory, "sample.md");
@@ -150,6 +179,84 @@ describe("Pandoc rendering", () => {
     assert.match(rendered.fragmentHtml, /src="\/token\/resource\?path=sample\.svg&amp;v=7"/);
     assert.match(rendered.html, /new EventSource\(CONFIG\.live\.eventsPath\)/);
     assert.match(rendered.html, /"revision":7/);
+  });
+
+  it("uses opaque allowlisted URLs for explicitly referenced parent resources outside the root", async (context) => {
+    if (!requirePandoc(context)) return;
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "pandoc-glance-render-parent-"));
+    const documentDirectory = join(temporaryRoot, "document");
+    const outsidePdf = join(temporaryRoot, "figure.pdf");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(documentDirectory));
+    await writeFile(outsidePdf, "%PDF-1.4\n% preview fixture\n", "utf8");
+    const sourcePath = join(documentDirectory, "notes.qmd");
+
+    try {
+      const rendered = await renderDocument({
+        source: "![Parent PDF](../figure.pdf){fig-align=\"center\"}",
+        sourcePath,
+        resourceRoot: documentDirectory,
+        format: "markdown",
+        theme: "light",
+        fontSizePx: 15,
+        serverResources: {
+          resourcePath: "/token/resource",
+          assetPath: "/token/asset",
+          revision: 4,
+        },
+      });
+      assert.equal(rendered.assets.size, 1);
+      assert.match(rendered.fragmentHtml, /<div class="preview-pdf-figure preview-pdf-pending" data-preview-pdf-src="\/token\/asset\/[A-Za-z0-9_-]{24}\?v=4"/);
+      assert.match(rendered.fragmentHtml, /class="preview-pdf-open"[^>]*>Open PDF<\/a>/);
+      assert.doesNotMatch(rendered.fragmentHtml, /<embed\b/);
+      assert.equal([...rendered.assets.values()][0], await realpath(outsidePdf));
+      assert.match(rendered.html, /pdfjs-dist@4\.10\.38/);
+      assert.match(rendered.html, /renderPdfPreviews/);
+      assert.match(rendered.html, /\.preview-pdf-figure/);
+      assert.match(rendered.html, /\.preview-pdf-loading/);
+
+      const oneShot = await renderDocument({
+        source: "![Parent PDF](../figure.pdf)",
+        sourcePath,
+        resourceRoot: documentDirectory,
+        format: "markdown",
+        theme: "light",
+        fontSizePx: 15,
+      });
+      assert.match(oneShot.fragmentHtml, /data-preview-pdf-src="data:application\/pdf;base64,JVBER/);
+      assert.match(oneShot.fragmentHtml, /class="preview-pdf-open" href="\.\.\/figure\.pdf"/);
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not rewrite attribute-like text inside rendered code", async (context) => {
+    if (!requirePandoc(context)) return;
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "pandoc-glance-render-code-"));
+    const documentDirectory = join(temporaryRoot, "document");
+    const outsideFile = join(temporaryRoot, "outside.txt");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(documentDirectory));
+    await writeFile(outsideFile, "private fixture", "utf8");
+
+    try {
+      const rendered = await renderDocument({
+        source: `Inline code: \`href="${outsideFile}"\`.`,
+        sourcePath: join(documentDirectory, "notes.md"),
+        resourceRoot: documentDirectory,
+        format: "markdown",
+        theme: "light",
+        fontSizePx: 15,
+        serverResources: {
+          resourcePath: "/token/resource",
+          assetPath: "/token/asset",
+          revision: 5,
+        },
+      });
+      assert.equal(rendered.assets.size, 0);
+      assert.ok(rendered.fragmentHtml.includes(outsideFile), rendered.fragmentHtml);
+      assert.doesNotMatch(rendered.fragmentHtml, /\/token\/asset/);
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it("uses opaque allowlisted URLs for explicitly referenced absolute resources outside the root", async (context) => {
@@ -204,6 +311,71 @@ describe("Pandoc rendering", () => {
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Markdown preprocessing", () => {
+  it("strips comments outside code while preserving YAML front matter and comment literals", () => {
+    const markdown = [
+      "---",
+      "title: Comment handling",
+      "custom: \"<!-- YAML literal -->\"",
+      "---",
+      "",
+      "Before `<!-- inline literal -->`.",
+      "",
+      "<!--",
+      "private drafting note",
+      "-->",
+      "",
+      "```html",
+      "<!-- fenced literal -->",
+      "```",
+      "",
+      "After",
+    ].join("\n");
+    const stripped = stripMarkdownHtmlComments(markdown);
+
+    assert.match(stripped, /custom: "<!-- YAML literal -->"/);
+    assert.match(stripped, /`<!-- inline literal -->`/);
+    assert.match(stripped, /```html\n<!-- fenced literal -->\n```/);
+    assert.doesNotMatch(stripped, /private drafting note/);
+    assert.match(stripped, /Before[\s\S]*After/);
+  });
+
+  it("preserves multiline code spans, nested fences, and YAML closed with ellipses", () => {
+    const markdown = [
+      "---",
+      "title: \"<!-- YAML literal -->\"",
+      "...",
+      "",
+      "`before",
+      "<!-- multiline code literal -->",
+      "after`",
+      "",
+      "> ```html",
+      "> <!-- blockquote fence literal -->",
+      "> ```",
+      "",
+      "- ```html",
+      "  <!-- list fence literal -->",
+      "  ```",
+      "",
+      "```text",
+      "``` not a closing fence",
+      "<!-- fence literal after a fence-like line -->",
+      "```",
+      "",
+      "<!-- remove this drafting note -->",
+    ].join("\n");
+    const stripped = stripMarkdownHtmlComments(markdown);
+
+    assert.match(stripped, /title: \"<!-- YAML literal -->\"/);
+    assert.match(stripped, /<!-- multiline code literal -->/);
+    assert.match(stripped, /<!-- blockquote fence literal -->/);
+    assert.match(stripped, /<!-- list fence literal -->/);
+    assert.match(stripped, /<!-- fence literal after a fence-like line -->/);
+    assert.doesNotMatch(stripped, /remove this drafting note/);
   });
 });
 

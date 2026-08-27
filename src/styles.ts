@@ -178,6 +178,17 @@ body {
 }
 #preview-root > :first-child { margin-top: 0; }
 #preview-root > :last-child { margin-bottom: 0; }
+#preview-root #title-block-header {
+  margin-bottom: 2em;
+  padding-bottom: 1.25em;
+  border-bottom: 1px solid var(--border-muted);
+}
+#preview-root #title-block-header .title { margin-top: 0; }
+#preview-root #title-block-header .author,
+#preview-root #title-block-header .date {
+  margin: 0.3em 0 0;
+  color: var(--muted);
+}
 #preview-root h1,
 #preview-root h2,
 #preview-root h3,
@@ -269,6 +280,48 @@ body {
 #preview-root img,
 #preview-root video,
 #preview-root svg { max-width: 100%; height: auto; }
+#preview-root .preview-pdf-figure {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--border-muted);
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+  line-height: 0;
+}
+#preview-root .preview-pdf-pending,
+#preview-root .preview-pdf-failed {
+  min-height: 220px;
+  background: var(--panel);
+}
+#preview-root .preview-pdf-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 3em 1em;
+  color: var(--muted);
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+#preview-root .preview-pdf-failed .preview-pdf-loading { color: var(--error); }
+#preview-root .preview-pdf-figure canvas { display: block; width: 100%; height: auto; }
+#preview-root .preview-pdf-open {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  padding: 0.36em 0.62em;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--bg) 55%, transparent);
+  font-size: 0.78em;
+  line-height: 1.25;
+}
+#preview-root .preview-pdf-figure[data-fig-align="center"] { margin-right: auto; margin-left: auto; }
+#preview-root .preview-pdf-figure[data-fig-align="right"] { margin-right: 0; margin-left: auto; }
 #preview-root figure { text-align: center; }
 #preview-root figcaption { margin-top: 0.45em; color: var(--muted); font-size: 0.9em; }
 #preview-root math[display="block"],

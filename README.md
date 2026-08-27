@@ -42,7 +42,13 @@ pandoc-glance <file> --watch
 | `-h, --help` | Show help |
 | `-v, --version` | Show the version |
 
-Automatic format detection recognizes common Markdown extensions (`.md`, `.markdown`, `.mdown`, `.mkd`, `.qmd`, and `.rmd`) and standalone LaTeX (`.tex` and `.latex`). Use `--format` for another extension.
+Automatic format detection recognizes common Markdown extensions (`.md`, `.markdown`, `.mdown`, `.mkd`, `.qmd`, and `.rmd`) and standalone LaTeX (`.tex` and `.latex`). Use `--format` for another extension. A `.qmd` file is treated as Pandoc Markdown; pandoc-glance does not run Quarto or reproduce project formats such as Reveal.js presentations, books, or websites. Use `quarto preview` when the Quarto build itself is the desired output.
+
+### Themes
+
+`--theme auto` is the default and follows the browser's `prefers-color-scheme` setting. `--theme light` and `--theme dark` pin the corresponding built-in palette. The palette covers the document, code highlighting, MathJax fallback, Mermaid diagrams, and preview status UI; `--font-size` controls document text separately.
+
+Themes are intentionally independent of Pi, editors, and Quarto. There is currently no custom-CSS or named-theme option.
 
 ### One-shot preview
 
@@ -130,11 +136,22 @@ Relative paths resolve from the source document's directory:
 
 ```markdown
 ![Experiment result](figures/result.png)
+![Shared parent figure](../figures/result.png)
 ![Path containing spaces](<figures/run 01.png>)
 ![[figures/result.png|Obsidian-style caption]]
 ```
 
-Absolute local image paths are also supported. Watch mode uses revisioned, non-cached resource URLs so saved image changes appear immediately.
+PNG/JPEG/SVG-style images and local PDF figures are supported. PDF figures render their first page through pdf.js and retain an **Open PDF** link as a fallback:
+
+```markdown
+![Model diagram](../figures/model.pdf){width=80% fig-align="center"}
+```
+
+One-shot output inlines local PDF figures up to 16 MB each and 30 MB total, so the browser can render them without `file:` fetch access; larger PDFs retain the **Open PDF** fallback.
+
+Absolute paths are also supported. In watch mode, an explicitly authored parent-relative or absolute reference outside the document directory is exposed only through an opaque per-render allowlist URL; arbitrary path traversal remains blocked. Resource responses are revisioned and not browser-cached.
+
+HTML comments outside code spans and fenced code blocks are removed before rendering, so private drafting notes do not become visible when raw HTML is disabled.
 
 ### Standalone LaTeX
 
@@ -199,8 +216,9 @@ Pandoc conversion, styling, native MathML, syntax highlighting, local resources,
 - Mermaid 11.16 from jsDelivr when the document contains a Mermaid block.
 - Lucide or Logos icon data from unpkg when a diagram uses that pack.
 - MathJax 3 from jsDelivr when Pandoc leaves an equation as TeX.
+- pdf.js 4.10 from jsDelivr when the document contains a local PDF figure.
 
-Without network access, the core preview still works. Mermaid remains visible as source with an error, and unsupported equations remain as TeX with a warning.
+Without network access, the core preview still works. Mermaid remains visible as source with an error, unsupported equations remain as TeX with a warning, and PDF figures retain a direct **Open PDF** link.
 
 ## Security model
 
@@ -209,8 +227,8 @@ Watch mode:
 - Binds only to `127.0.0.1`.
 - Uses a random 192-bit token in every preview route.
 - Sets `no-store`, `nosniff`, no-referrer, same-origin, and content-security headers.
-- Rejects path traversal, including encoded `..` and symlinks outside the source directory.
-- Serves an outside absolute file only when the current document explicitly references it, through an opaque ID.
+- Rejects arbitrary resource-route traversal, including encoded `..`, and rejects symlinks that escape the source directory.
+- Serves a parent-relative or absolute file outside the document directory only when the current document explicitly references it, through an opaque ID.
 
 A failed render keeps the previous HTML and resource allowlist.
 
@@ -277,4 +295,4 @@ Fetch the printed loopback URL, save an edit to the fixture or a temporary copy,
 
 ## License
 
-MIT. The rendering palettes and selected normalization/browser-preview patterns were adapted from the MIT-licensed [`pi-markdown-preview`](https://github.com/omaclaren/pi-markdown-preview) implementation; see [`LICENSE`](LICENSE).
+MIT. The rendering palettes and selected normalization/browser-preview patterns were adapted from the MIT-licensed [`pi-markdown-preview`](https://github.com/omaclaren/pi-markdown-preview) and [`pi-studio`](https://github.com/omaclaren/pi-studio) implementations; see [`LICENSE`](LICENSE).

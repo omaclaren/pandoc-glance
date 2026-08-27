@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildPreviewCss, palettesForClient, type PreviewTheme } from "./styles.js";
@@ -52,8 +52,11 @@ export interface BuildHtmlOptions {
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".qmd", ".rmd"]);
 const LATEX_EXTENSIONS = new Set([".tex", ".latex"]);
 const PANDOC_OUTPUT_LIMIT_BYTES = 50 * 1024 * 1024;
+const ONE_SHOT_PDF_MAX_BYTES = 16 * 1024 * 1024;
+const ONE_SHOT_PDF_TOTAL_BYTES = 30 * 1024 * 1024;
 const PANDOC_TIMEOUT_MS = 30_000;
 const MERMAID_BROWSER_VERSION = "11.16.0";
+const PDFJS_BROWSER_VERSION = "4.10.38";
 const MERMAID_BROWSER_ICON_PACKS = [
   { name: "lucide", url: "https://unpkg.com/@iconify-json/lucide@1/icons.json" },
   { name: "logos", url: "https://unpkg.com/@iconify-json/logos@1/icons.json" },
@@ -266,6 +269,133 @@ export function normalizeObsidianImages(markdown: string): string {
     });
 }
 
+// Adapted from pi-studio's MIT-licensed, fence-aware Markdown comment handling.
+function findClosingBacktickRun(markdown: string, startIndex: number, fenceLength: number): number {
+  let index = startIndex;
+  while (index < markdown.length) {
+    const next = markdown.indexOf("`", index);
+    if (next < 0) return -1;
+    let runLength = 1;
+    while (markdown[next + runLength] === "`") runLength += 1;
+    if (runLength === fenceLength) return next;
+    index = next + runLength;
+  }
+  return -1;
+}
+
+function stripHtmlCommentsInMarkdownSegment(markdown: string): string {
+  let output = "";
+  let index = 0;
+  let inHtmlComment = false;
+
+  while (index < markdown.length) {
+    if (inHtmlComment) {
+      if (markdown.startsWith("-->", index)) {
+        inHtmlComment = false;
+        index += 3;
+        continue;
+      }
+      const character = markdown[index]!;
+      if (character === "\n" || character === "\r") output += character;
+      index += 1;
+      continue;
+    }
+
+    const backtickMatch = markdown.slice(index).match(/^`+/);
+    if (backtickMatch) {
+      const fence = backtickMatch[0];
+      const closingIndex = findClosingBacktickRun(markdown, index + fence.length, fence.length);
+      if (closingIndex >= 0) {
+        const end = closingIndex + fence.length;
+        output += markdown.slice(index, end);
+        index = end;
+      } else {
+        output += fence;
+        index += fence.length;
+      }
+      continue;
+    }
+
+    if (markdown.startsWith("<!--", index)) {
+      inHtmlComment = true;
+      index += 4;
+      continue;
+    }
+
+    output += markdown[index]!;
+    index += 1;
+  }
+
+  return output;
+}
+
+function splitYamlFrontMatter(markdown: string): { frontMatter: string; body: string } | null {
+  const match = markdown.match(/^(\uFEFF?---[ \t]*(?:\r?\n)[\s\S]*?(?:\r?\n)(?:---|\.\.\.)[ \t]*(?:\r?\n|$))([\s\S]*)$/);
+  if (!match) return null;
+  return { frontMatter: match[1] ?? "", body: match[2] ?? "" };
+}
+
+function markdownFenceLine(line: string): { character: "`" | "~"; length: number; suffix: string } | null {
+  let candidate = line;
+  candidate = candidate.replace(/^(?:[ \t]{0,3}>[ \t]?)+/, "");
+  candidate = candidate.replace(/^[ \t]{0,3}(?:(?:[*+-])|(?:\d+[.)]))[ \t]+/, "");
+  const match = candidate.trimStart().match(/^(`{3,}|~{3,})(.*)$/);
+  if (!match) return null;
+  const marker = match[1]!;
+  return {
+    character: marker[0] as "`" | "~",
+    length: marker.length,
+    suffix: match[2] ?? "",
+  };
+}
+
+/** Remove authored HTML comments without exposing their Markdown contents through Pandoc's -raw_html mode. */
+export function stripMarkdownHtmlComments(markdown: string): string {
+  const split = splitYamlFrontMatter(markdown);
+  const frontMatter = split?.frontMatter ?? "";
+  const body = split?.body ?? markdown;
+  const lines = body.split("\n");
+  const output: string[] = [];
+  let plainLines: string[] = [];
+  let fenceCharacter: "`" | "~" | undefined;
+  let fenceLength = 0;
+
+  const flushPlain = (): void => {
+    if (plainLines.length === 0) return;
+    output.push(stripHtmlCommentsInMarkdownSegment(plainLines.join("\n")));
+    plainLines = [];
+  };
+
+  for (const line of lines) {
+    const fence = markdownFenceLine(line);
+    if (!fenceCharacter && fence) {
+      flushPlain();
+      fenceCharacter = fence.character;
+      fenceLength = fence.length;
+      output.push(line);
+      continue;
+    }
+    if (
+      fenceCharacter
+      && fence
+      && fence.character === fenceCharacter
+      && fence.length >= fenceLength
+      && !fence.suffix.trim()
+    ) {
+      fenceCharacter = undefined;
+      fenceLength = 0;
+      output.push(line);
+      continue;
+    }
+
+    if (fenceCharacter) output.push(line);
+    else plainLines.push(line);
+  }
+
+  flushPlain();
+  return `${frontMatter}${output.join("\n")}`;
+}
+
 function longestFenceRun(text: string, character: "`" | "~"): number {
   const pattern = character === "`" ? /`+/g : /~+/g;
   let longest = 0;
@@ -334,7 +464,8 @@ export function normalizeMarkdownFencedBlocks(markdown: string): string {
 }
 
 export function prepareMarkdownForPandoc(markdown: string): string {
-  return normalizeMarkdownFencedBlocks(normalizeObsidianImages(normalizeMathDelimiters(markdown)));
+  const withoutComments = stripMarkdownHtmlComments(markdown);
+  return normalizeMarkdownFencedBlocks(normalizeObsidianImages(normalizeMathDelimiters(withoutComments)));
 }
 
 export async function renderPandocFragment(
@@ -354,15 +485,13 @@ export async function renderPandocFragment(
     "--mathml",
     "--wrap=none",
     `--resource-path=${resourceRoot}`,
+    "--metadata=pagetitle:pandoc-glance preview",
+    "--standalone",
   ];
-  if (format === "latex") args.push("--standalone");
   const result = await runPandoc(args, pandocInput);
-  let html = result.stdout;
-  if (format === "latex") {
-    const body = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-    if (!body) throw new PandocError("Pandoc did not return a complete HTML body for the LaTeX document.");
-    html = body[1]!.trimStart();
-  }
+  const body = result.stdout.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  if (!body) throw new PandocError(`Pandoc did not return a complete HTML body for the ${format} document.`);
+  const html = body[1]!.trimStart();
   return {
     html,
     warnings: result.stderr ? result.stderr.split(/\r?\n/).filter(Boolean) : [],
@@ -424,6 +553,94 @@ interface RewriteResult {
   assets: Map<string, string>;
 }
 
+function markLocalPdfEmbeds(fragmentHtml: string): string {
+  return fragmentHtml.replace(/<embed\b[^>]*>/gi, (tag) => {
+    const srcMatch = tag.match(/\bsrc=("([^"]*)"|'([^']*)')/i);
+    const localReference = srcMatch ? decodeLocalReference(srcMatch[2] ?? srcMatch[3] ?? "") : null;
+    if (!localReference || extname(localReference.path).toLowerCase() !== ".pdf") return tag;
+
+    let marked = tag;
+    if (!/\btype\s*=/i.test(marked)) marked = marked.replace(/^<embed\b/i, '<embed type="application/pdf"');
+    if (!/\bdata-preview-pdf\s*=/i.test(marked)) {
+      marked = marked.replace(/^<embed\b/i, '<embed data-preview-pdf="true"');
+    }
+    return marked;
+  });
+}
+
+function tagAttribute(tag: string, name: string): string | null {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = tag.match(new RegExp(`\\b${escapedName}=("([^"]*)"|'([^']*)')`, "i"));
+  return match ? decodeHtmlAttribute(match[2] ?? match[3] ?? "") : null;
+}
+
+async function inlineOneShotPdfSources(fragmentHtml: string, resourceRoot: string): Promise<string> {
+  const replacements: Array<{ start: number; end: number; value: string }> = [];
+  const tagPattern = /<embed\b[^>]*\bdata-preview-pdf=(?:"true"|'true')[^>]*>/gi;
+  let totalBytes = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tagPattern.exec(fragmentHtml)) !== null) {
+    const tag = match[0];
+    const src = tagAttribute(tag, "src");
+    const localReference = src ? decodeLocalReference(src) : null;
+    if (!src || !localReference) continue;
+    const localPath = localReference.path;
+    const candidatePath = isAbsolute(localPath) || win32.isAbsolute(localPath)
+      ? localPath
+      : resolve(resourceRoot, localPath);
+
+    try {
+      const canonicalPath = await realpath(candidatePath);
+      const metadata = await stat(canonicalPath);
+      if (!metadata.isFile() || metadata.size > ONE_SHOT_PDF_MAX_BYTES) continue;
+      if (totalBytes + metadata.size > ONE_SHOT_PDF_TOTAL_BYTES) continue;
+      const pdf = await readFile(canonicalPath);
+      totalBytes += pdf.length;
+      const dataUri = `data:application/pdf;base64,${pdf.toString("base64")}`;
+      let replacement = tag.replace(
+        /\bsrc=("[^"]*"|'[^']*')/i,
+        `src="${dataUri}"`,
+      );
+      replacement = replacement.replace(
+        /^<embed\b/i,
+        `<embed data-preview-pdf-open-href="${encodeHtmlAttribute(src)}"`,
+      );
+      replacements.push({ start: match.index, end: match.index + tag.length, value: replacement });
+    } catch {
+      // Leave a direct Open PDF link when a local figure cannot be inlined.
+    }
+  }
+
+  let inlined = fragmentHtml;
+  for (const replacement of replacements.reverse()) {
+    inlined = inlined.slice(0, replacement.start) + replacement.value + inlined.slice(replacement.end);
+  }
+  return inlined;
+}
+
+function replaceMarkedPdfEmbedsWithPlaceholders(fragmentHtml: string): string {
+  return fragmentHtml.replace(/<embed\b[^>]*\bdata-preview-pdf=(?:"true"|'true')[^>]*>/gi, (tag) => {
+    const src = tagAttribute(tag, "src");
+    if (!src) return tag;
+    const id = tagAttribute(tag, "id");
+    const style = tagAttribute(tag, "style");
+    const width = tagAttribute(tag, "width");
+    const alignment = tagAttribute(tag, "data-fig-align");
+    const title = tagAttribute(tag, "title") || "PDF figure";
+    const openHref = tagAttribute(tag, "data-preview-pdf-open-href") || src;
+    const attributes = [
+      id ? ` id="${encodeHtmlAttribute(id)}"` : "",
+      style ? ` style="${encodeHtmlAttribute(style)}"` : "",
+      width ? ` data-preview-pdf-width="${encodeHtmlAttribute(width)}"` : "",
+      alignment ? ` data-fig-align="${encodeHtmlAttribute(alignment)}"` : "",
+    ].join("");
+    const encodedSrc = encodeHtmlAttribute(src);
+    const encodedOpenHref = encodeHtmlAttribute(openHref);
+    return `<div class="preview-pdf-figure preview-pdf-pending" data-preview-pdf-src="${encodedSrc}"${attributes}><div class="preview-pdf-loading" role="status">Loading PDF figure…</div><a class="preview-pdf-open" href="${encodedOpenHref}" target="_blank" rel="noopener noreferrer" title="${encodeHtmlAttribute(title)}">Open PDF</a></div>`;
+  });
+}
+
 async function rewriteServerResourceUrls(
   fragmentHtml: string,
   resourceRoot: string,
@@ -431,45 +648,53 @@ async function rewriteServerResourceUrls(
 ): Promise<RewriteResult> {
   const assets = new Map<string, string>();
   const replacements: Array<{ start: number; end: number; value: string }> = [];
-  const attributePattern = /\b(?:src|href|poster|data)=("([^"]*)"|'([^']*)')/gi;
-  let match: RegExpExecArray | null;
+  const tagPattern = /<[A-Za-z][^>]*>/g;
+  let tagMatch: RegExpExecArray | null;
 
-  while ((match = attributePattern.exec(fragmentHtml)) !== null) {
-    const quotedValue = match[1]!;
-    const rawValue = match[2] ?? match[3] ?? "";
-    const localReference = decodeLocalReference(rawValue);
-    if (!localReference) continue;
+  while ((tagMatch = tagPattern.exec(fragmentHtml)) !== null) {
+    const tag = tagMatch[0];
+    const attributePattern = /\b(?:src|href|poster|data)\s*=\s*("([^"]*)"|'([^']*)')/gi;
+    let attributeMatch: RegExpExecArray | null;
+    while ((attributeMatch = attributePattern.exec(tag)) !== null) {
+      const quotedValue = attributeMatch[1]!;
+      const rawValue = attributeMatch[2] ?? attributeMatch[3] ?? "";
+      const localReference = decodeLocalReference(rawValue);
+      if (!localReference) continue;
 
-    const localPath = localReference.path;
-    const absolutePath = isAbsolute(localPath) || win32.isAbsolute(localPath);
-    let rewritten: string;
+      const localPath = localReference.path;
+      const absolutePath = isAbsolute(localPath) || win32.isAbsolute(localPath);
+      const candidatePath = absolutePath ? localPath : resolve(resourceRoot, localPath);
+      let rewritten: string;
 
-    if (!absolutePath) {
-      rewritten = `${config.resourcePath}?path=${encodeURIComponent(localPath)}&v=${config.revision}${localReference.hash}`;
-    } else if (pathIsWithin(resourceRoot, localPath)) {
-      const relativePath = relative(resolve(resourceRoot), resolve(localPath));
-      rewritten = `${config.resourcePath}?path=${encodeURIComponent(relativePath)}&v=${config.revision}${localReference.hash}`;
-    } else {
-      try {
-        const canonicalPath = await realpath(localPath);
-        const metadata = await stat(canonicalPath);
-        if (!metadata.isFile()) continue;
-        const assetId = createHash("sha256").update(canonicalPath).digest("base64url").slice(0, 24);
-        assets.set(assetId, canonicalPath);
-        rewritten = `${config.assetPath}/${assetId}?v=${config.revision}${localReference.hash}`;
-      } catch {
-        continue;
+      if (pathIsWithin(resourceRoot, candidatePath)) {
+        const relativePath = relative(resolve(resourceRoot), resolve(candidatePath));
+        rewritten = `${config.resourcePath}?path=${encodeURIComponent(relativePath)}&v=${config.revision}${localReference.hash}`;
+      } else {
+        try {
+          // An authored ../ or absolute reference outside the normal resource root is
+          // exposed only through an opaque, per-render allowlist entry. Arbitrary
+          // traversal requests to the public resource endpoint remain forbidden.
+          const canonicalPath = await realpath(candidatePath);
+          const metadata = await stat(canonicalPath);
+          if (!metadata.isFile()) continue;
+          const assetId = createHash("sha256").update(canonicalPath).digest("base64url").slice(0, 24);
+          assets.set(assetId, canonicalPath);
+          rewritten = `${config.assetPath}/${assetId}?v=${config.revision}${localReference.hash}`;
+        } catch {
+          continue;
+        }
       }
-    }
 
-    const quote = quotedValue[0] ?? "\"";
-    const replacement = `${quote}${encodeHtmlAttribute(rewritten)}${quote}`;
-    const valueOffset = match[0].indexOf(quotedValue);
-    replacements.push({
-      start: match.index + valueOffset,
-      end: match.index + valueOffset + quotedValue.length,
-      value: replacement,
-    });
+      const quote = quotedValue[0] ?? "\"";
+      const replacement = `${quote}${encodeHtmlAttribute(rewritten)}${quote}`;
+      const valueOffset = attributeMatch[0].indexOf(quotedValue);
+      const start = tagMatch.index + attributeMatch.index + valueOffset;
+      replacements.push({
+        start,
+        end: start + quotedValue.length,
+        value: replacement,
+      });
+    }
   }
 
   let rewrittenHtml = fragmentHtml;
@@ -477,6 +702,160 @@ async function rewriteServerResourceUrls(
     rewrittenHtml = rewrittenHtml.slice(0, replacement.start) + replacement.value + rewrittenHtml.slice(replacement.end);
   }
   return { html: rewrittenHtml, assets };
+}
+
+// Adapted from pi-studio's MIT-licensed PDF figure fallback.
+function buildPdfClientSource(): string {
+  const pdfJsUrlJson = escapeJsonForScript(
+    `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_BROWSER_VERSION}/legacy/build/pdf.min.mjs`,
+  );
+  const pdfJsWorkerUrlJson = escapeJsonForScript(
+    `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_BROWSER_VERSION}/legacy/build/pdf.worker.min.mjs`,
+  );
+
+  return String.raw`
+  let pdfJsPromise = null;
+
+  function setPdfRenderResult(status, error) {
+    window.__pdfPreviewRenderResult = error ? { status, error } : { status };
+  }
+
+  function ensurePdfJs() {
+    if (window.pdfjsLib && typeof window.pdfjsLib.getDocument === "function") {
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (pdfJsPromise) return pdfJsPromise;
+    pdfJsPromise = import(${pdfJsUrlJson}).then((module) => {
+      const api = module && typeof module.getDocument === "function"
+        ? module
+        : (module && module.default && typeof module.default.getDocument === "function" ? module.default : null);
+      if (!api) throw new Error("pdf.js did not initialize.");
+      if (api.GlobalWorkerOptions && !api.GlobalWorkerOptions.workerSrc) {
+        api.GlobalWorkerOptions.workerSrc = ${pdfJsWorkerUrlJson};
+      }
+      window.pdfjsLib = api;
+      return api;
+    }).catch((error) => {
+      pdfJsPromise = null;
+      throw error;
+    });
+    return pdfJsPromise;
+  }
+
+  function decodePdfDataUri(src) {
+    const match = String(src || "").match(/^data:application\/pdf(?:;[^,]*)?;base64,([A-Za-z0-9+/=\s]+)$/i);
+    if (!match) return null;
+    const binary = window.atob(String(match[1] || "").replace(/\s+/g, ""));
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  }
+
+  async function loadPdfBytes(src) {
+    const embedded = decodePdfDataUri(src);
+    if (embedded) return embedded;
+    const response = await fetch(src, { cache: "no-store" });
+    if (!response.ok) throw new Error("Failed to fetch PDF figure: HTTP " + response.status);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  function markPdfWrapperFailure(wrapper, message) {
+    wrapper.classList.remove("preview-pdf-pending");
+    wrapper.classList.add("preview-pdf-failed");
+    const loading = wrapper.querySelector(".preview-pdf-loading");
+    if (loading) loading.textContent = "PDF figure preview unavailable.";
+    if (message) wrapper.title = message;
+  }
+
+  async function renderPdfWrapper(wrapper, pdfjsLib) {
+    const src = String(wrapper.dataset.previewPdfSrc || "");
+    if (!src) throw new Error("PDF figure has no source URL.");
+    const authoredWidth = String(wrapper.dataset.previewPdfWidth || "");
+    if (!wrapper.getAttribute("style") && authoredWidth) {
+      wrapper.style.width = /^\d+(?:\.\d+)?$/.test(authoredWidth) ? authoredWidth + "px" : authoredWidth;
+    }
+    const measuredWidth = Math.max(1, Math.round(wrapper.getBoundingClientRect().width || 0));
+    const bytes = await loadPdfBytes(src);
+    const loadingTask = pdfjsLib.getDocument({ data: bytes });
+    const pdfDocument = await loadingTask.promise;
+
+    try {
+      const page = await pdfDocument.getPage(1);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const cssWidth = Math.max(1, measuredWidth || Math.round(baseViewport.width));
+      const renderScale = Math.max(0.25, cssWidth / baseViewport.width) * Math.min(window.devicePixelRatio || 1, 2);
+      const viewport = page.getViewport({ scale: renderScale });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) throw new Error("Canvas 2D context unavailable.");
+
+      canvas.width = Math.max(1, Math.ceil(viewport.width));
+      canvas.height = Math.max(1, Math.ceil(viewport.height));
+      canvas.style.width = "100%";
+      canvas.style.height = "auto";
+      canvas.setAttribute("aria-label", "PDF figure preview");
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      const openLink = wrapper.querySelector(".preview-pdf-open");
+      wrapper.replaceChildren(canvas);
+      if (openLink) wrapper.appendChild(openLink);
+      wrapper.classList.remove("preview-pdf-pending", "preview-pdf-failed");
+      wrapper.classList.add("preview-pdf-rendered");
+      wrapper.title = "PDF figure preview (page 1)";
+    } finally {
+      if (typeof pdfDocument.cleanup === "function") {
+        try { pdfDocument.cleanup(); } catch {}
+      }
+      if (typeof pdfDocument.destroy === "function") {
+        try { await pdfDocument.destroy(); } catch {}
+      }
+    }
+  }
+
+  async function renderPdfPreviews() {
+    if (!root) {
+      setPdfRenderResult("skipped");
+      return;
+    }
+    const wrappers = Array.from(root.querySelectorAll(".preview-pdf-figure[data-preview-pdf-src]"));
+    if (wrappers.length === 0) {
+      setPdfRenderResult("skipped");
+      return;
+    }
+
+    setPdfRenderResult("pending");
+    let pdfjsLib;
+    try {
+      pdfjsLib = await ensurePdfJs();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      wrappers.forEach((wrapper) => markPdfWrapperFailure(wrapper, message));
+      setPdfRenderResult("failed", message);
+      appendWarning("preview-pdf-warning", "PDF figure rendering is unavailable. Use Open PDF to view the source files.");
+      console.error("pdf.js load failed:", error);
+      return;
+    }
+
+    const failures = [];
+    for (const wrapper of wrappers) {
+      try {
+        await renderPdfWrapper(wrapper, pdfjsLib);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(message);
+        markPdfWrapperFailure(wrapper, message);
+        console.error("PDF figure render failed:", error);
+      }
+    }
+    if (failures.length > 0) {
+      const message = failures.length + " of " + wrappers.length + " PDF figures failed to render.";
+      setPdfRenderResult("failed", message);
+      appendWarning("preview-pdf-warning", message + " Use Open PDF for the affected files.");
+    } else {
+      setPdfRenderResult("success");
+    }
+  }
+`;
 }
 
 // Adapted from pi-markdown-preview's MIT-licensed Mermaid icon and contrast handling.
@@ -790,6 +1169,7 @@ function buildClientScript(theme: PreviewTheme, liveReload?: LiveReloadConfig): 
   }
 
 ${buildMermaidClientSource()}
+${buildPdfClientSource()}
 
   function fallbackMathTargets() {
     if (!root) return [];
@@ -900,7 +1280,7 @@ ${buildMermaidClientSource()}
     assignStableAnchors();
     restoreReadingPosition();
     connectLiveReload();
-    await Promise.all([renderMermaid(), renderMathFallback()]);
+    await Promise.all([renderMermaid(), renderMathFallback(), renderPdfPreviews()]);
     if (document.fonts && document.fonts.ready) {
       try { await document.fonts.ready; } catch {}
     }
@@ -966,14 +1346,17 @@ export function buildInitialErrorHtml(options: {
 
 export async function renderDocument(options: RenderDocumentOptions): Promise<RenderDocumentResult> {
   const rendered = await renderPandocFragment(options.source, options.format, options.resourceRoot);
-  let fragmentHtml = rendered.html;
+  let fragmentHtml = markLocalPdfEmbeds(rendered.html);
   let assets = new Map<string, string>();
 
   if (options.serverResources) {
     const rewritten = await rewriteServerResourceUrls(fragmentHtml, options.resourceRoot, options.serverResources);
     fragmentHtml = rewritten.html;
     assets = rewritten.assets;
+  } else {
+    fragmentHtml = await inlineOneShotPdfSources(fragmentHtml, options.resourceRoot);
   }
+  fragmentHtml = replaceMarkedPdfEmbedsWithPlaceholders(fragmentHtml);
 
   const htmlOptions: BuildHtmlOptions = {
     fragmentHtml,

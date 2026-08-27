@@ -22,6 +22,7 @@ export {
   prepareMarkdownForPandoc,
   renderDocument,
   renderPandocFragment,
+  stripMarkdownHtmlComments,
   type BuildHtmlOptions,
   type LiveReloadConfig,
   type PreviewFormat,

@@ -234,3 +234,5 @@ Completed in the `0.1.0` MVP:
 - [x] complete general, headless, security, troubleshooting, and Zed documentation.
 
 One ambiguity was resolved in favor of recovery: one-shot initial render failures exit immediately with a nonzero status, while watch-mode initial render failures serve an error page and remain alive so a corrected save can recover. A watch process stopped before it ever renders successfully exits nonzero.
+
+Post-MVP rendering hardening also preserves Markdown title/author metadata, strips authored HTML comments outside code, supports browser PDF figures, and maps explicitly authored parent-relative resources through opaque per-render allowlist URLs. The public resource endpoint still rejects arbitrary traversal and symlink escape.
