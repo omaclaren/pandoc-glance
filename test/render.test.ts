@@ -139,6 +139,112 @@ describe("Pandoc rendering", () => {
     assert.doesNotMatch(rendered.fragmentHtml, /private drafting note|&lt;!|--&gt;/);
   });
 
+  it("resolves exact Quarto and pandoc-crossref figure references", async (context) => {
+    if (!requirePandoc(context)) return;
+    const sourcePath = join(fixtureDirectory, "crossrefs.qmd");
+    const rendered = await renderDocument({
+      source: [
+        "See @fig-elephant and @fig:whale. Missing @fig-missing.",
+        "",
+        "Qualified [see @fig-elephant, p. 2] remains unresolved.",
+        "",
+        "![An Elephant](elephant.png){#fig-elephant}",
+        "",
+        "![A Whale](whale.png){#fig:whale}",
+        "",
+        "Inline ![not a standalone figure](inline.png){#fig-inline}; @fig-inline.",
+        "",
+        "`@fig-elephant`",
+      ].join("\n"),
+      sourcePath,
+      resourceRoot: fixtureDirectory,
+      format: "markdown",
+      theme: "auto",
+      fontSizePx: 15,
+    });
+
+    assert.match(rendered.fragmentHtml, /<a href="#fig-elephant">Figure 1<\/a>/);
+    assert.match(rendered.fragmentHtml, /<a href="#fig:whale">Figure 2<\/a>/);
+    assert.match(rendered.fragmentHtml, /<figcaption[^>]*>Figure 1: An Elephant<\/figcaption>/);
+    assert.match(rendered.fragmentHtml, /<figcaption[^>]*>Figure 2: A Whale<\/figcaption>/);
+    assert.match(rendered.fragmentHtml, /@fig-missing/);
+    assert.match(rendered.fragmentHtml, /\[see @fig-elephant, p\. 2\]/);
+    assert.match(rendered.fragmentHtml, /@fig-inline/);
+    assert.match(rendered.fragmentHtml, /<code>@fig-elephant<\/code>/);
+    assert.ok(rendered.pandocWarnings.some((warning) => warning.includes("unresolved figure reference: fig-missing")));
+    assert.ok(rendered.pandocWarnings.some((warning) => warning.includes("unresolved figure reference: fig-inline")));
+  });
+
+  it("numbers unlabelled figures consistently and leaves ordinary captions alone without references", async (context) => {
+    if (!requirePandoc(context)) return;
+    const options = {
+      sourcePath: join(fixtureDirectory, "numbering.md"),
+      resourceRoot: fixtureDirectory,
+      format: "markdown" as const,
+      theme: "light" as const,
+      fontSizePx: 15,
+    };
+    const numbered = await renderDocument({
+      ...options,
+      source: [
+        "See @fig-second.",
+        "",
+        "![Unlabelled but captioned](first.png)",
+        "",
+        "![Second](second.png){#fig-second}",
+      ].join("\n"),
+    });
+    assert.match(numbered.fragmentHtml, /href="#fig-second">Figure 2<\/a>/);
+    assert.match(numbered.fragmentHtml, /Figure 1: Unlabelled but captioned/);
+    assert.match(numbered.fragmentHtml, /Figure 2: Second/);
+
+    const ordinary = await renderDocument({
+      ...options,
+      source: "![Ordinary Markdown caption](ordinary.png)",
+    });
+    assert.match(ordinary.fragmentHtml, /<figcaption[^>]*>Ordinary Markdown caption<\/figcaption>/);
+    assert.doesNotMatch(ordinary.fragmentHtml, /Figure 1:/);
+  });
+
+  it("keeps duplicate figure references visibly unresolved", async (context) => {
+    if (!requirePandoc(context)) return;
+    const rendered = await renderDocument({
+      source: [
+        "![First](one.png){#fig-duplicate}",
+        "",
+        "![Second](two.png){#fig-duplicate}",
+        "",
+        "See @fig-duplicate.",
+      ].join("\n"),
+      sourcePath: join(fixtureDirectory, "duplicate-figures.md"),
+      resourceRoot: fixtureDirectory,
+      format: "markdown",
+      theme: "light",
+      fontSizePx: 15,
+    });
+
+    assert.match(rendered.fragmentHtml, /@fig-duplicate/);
+    assert.doesNotMatch(rendered.fragmentHtml, /href="#fig-duplicate">Figure/);
+    assert.match(rendered.fragmentHtml, /Figure 1: First/);
+    assert.match(rendered.fragmentHtml, /Figure 2: Second/);
+    assert.ok(rendered.pandocWarnings.some((warning) => warning.includes("duplicate figure identifier: fig-duplicate")));
+    assert.ok(rendered.pandocWarnings.some((warning) => warning.includes("unresolved figure reference: fig-duplicate")));
+  });
+
+  it("renders raw attributed HTML as inert code", async (context) => {
+    if (!requirePandoc(context)) return;
+    const rendered = await renderDocument({
+      source: "```{=html}\n<script>globalThis.__unsafe = true</script>\n```",
+      sourcePath: join(fixtureDirectory, "raw-attribute.md"),
+      resourceRoot: fixtureDirectory,
+      format: "markdown",
+      theme: "light",
+      fontSizePx: 15,
+    });
+    assert.doesNotMatch(rendered.fragmentHtml, /<script>/i);
+    assert.match(rendered.fragmentHtml, /&lt;script&gt;globalThis\.__unsafe = true&lt;\/script&gt;/);
+  });
+
   it("does not misinterpret plain escaped brackets and parentheses as math", async (context) => {
     if (!requirePandoc(context)) return;
     const sourcePath = join(fixtureDirectory, "sample.md");
@@ -192,7 +298,7 @@ describe("Pandoc rendering", () => {
 
     try {
       const rendered = await renderDocument({
-        source: "![Parent PDF](../figure.pdf){fig-align=\"center\"}",
+        source: "See @fig-parent.\n\n![Parent PDF](../figure.pdf){#fig-parent fig-align=\"center\"}",
         sourcePath,
         resourceRoot: documentDirectory,
         format: "markdown",
@@ -205,7 +311,9 @@ describe("Pandoc rendering", () => {
         },
       });
       assert.equal(rendered.assets.size, 1);
-      assert.match(rendered.fragmentHtml, /<div class="preview-pdf-figure preview-pdf-pending" data-preview-pdf-src="\/token\/asset\/[A-Za-z0-9_-]{24}\?v=4"/);
+      assert.match(rendered.fragmentHtml, /<a href="#fig-parent">Figure 1<\/a>/);
+      assert.match(rendered.fragmentHtml, /<div class="preview-pdf-figure preview-pdf-pending" data-preview-pdf-src="\/token\/asset\/[A-Za-z0-9_-]{24}\?v=4" id="fig-parent"/);
+      assert.match(rendered.fragmentHtml, /<figcaption[^>]*>Figure 1: Parent PDF<\/figcaption>/);
       assert.match(rendered.fragmentHtml, /class="preview-pdf-open"[^>]*>Open PDF<\/a>/);
       assert.doesNotMatch(rendered.fragmentHtml, /<embed\b/);
       assert.equal([...rendered.assets.values()][0], await realpath(outsidePdf));
@@ -349,9 +457,8 @@ describe("Markdown preprocessing", () => {
       "title: \"<!-- YAML literal -->\"",
       "...",
       "",
-      "`before",
-      "<!-- multiline code literal -->",
-      "after`",
+      "``<!-- multiline code literal",
+      "continues here -->``",
       "",
       "> ```html",
       "> <!-- blockquote fence literal -->",
@@ -371,11 +478,38 @@ describe("Markdown preprocessing", () => {
     const stripped = stripMarkdownHtmlComments(markdown);
 
     assert.match(stripped, /title: \"<!-- YAML literal -->\"/);
-    assert.match(stripped, /<!-- multiline code literal -->/);
+    assert.match(stripped, /``<!-- multiline code literal\ncontinues here -->``/);
     assert.match(stripped, /<!-- blockquote fence literal -->/);
     assert.match(stripped, /<!-- list fence literal -->/);
     assert.match(stripped, /<!-- fence literal after a fence-like line -->/);
     assert.doesNotMatch(stripped, /remove this drafting note/);
+  });
+
+  it("preserves indented code and destinations while rejecting false front matter", () => {
+    const markdown = [
+      "---",
+      "Ordinary Markdown between thematic breaks.",
+      "<!-- remove from the body -->",
+      "---",
+      "",
+      "    <!-- indented code literal -->",
+      "",
+      "[destination](figure<!--destination-literal-->.png \"<!-- title literal -->\")",
+      "",
+      "<div>",
+      "<!-- remove from native HTML flow -->",
+      "`<!-- native inline code literal -->`",
+      "</div>",
+    ].join("\n");
+    const stripped = stripMarkdownHtmlComments(markdown);
+
+    assert.match(stripped, /Ordinary Markdown between thematic breaks\./);
+    assert.doesNotMatch(stripped, /remove from the body/);
+    assert.match(stripped, /    <!-- indented code literal -->/);
+    assert.match(stripped, /figure<!--destination-literal-->\.png/);
+    assert.match(stripped, /\"<!-- title literal -->\"/);
+    assert.doesNotMatch(stripped, /remove from native HTML flow/);
+    assert.match(stripped, /`<!-- native inline code literal -->`/);
   });
 });
 

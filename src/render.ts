@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { stripMarkdownHtmlCommentsPreservingYamlFrontMatter } from "./markdown-comments.js";
 import { buildPreviewCss, palettesForClient, type PreviewTheme } from "./styles.js";
 
 export type PreviewFormat = "markdown" | "latex";
@@ -57,6 +58,9 @@ const ONE_SHOT_PDF_TOTAL_BYTES = 30 * 1024 * 1024;
 const PANDOC_TIMEOUT_MS = 30_000;
 const MERMAID_BROWSER_VERSION = "11.16.0";
 const PDFJS_BROWSER_VERSION = "4.10.38";
+const PANDOC_FIGURE_CROSSREF_FILTER_PATH = fileURLToPath(
+  new URL("../shared/pandoc-figure-crossrefs.lua", import.meta.url),
+);
 const MERMAID_BROWSER_ICON_PACKS = [
   { name: "lucide", url: "https://unpkg.com/@iconify-json/lucide@1/icons.json" },
   { name: "logos", url: "https://unpkg.com/@iconify-json/logos@1/icons.json" },
@@ -269,131 +273,9 @@ export function normalizeObsidianImages(markdown: string): string {
     });
 }
 
-// Adapted from pi-studio's MIT-licensed, fence-aware Markdown comment handling.
-function findClosingBacktickRun(markdown: string, startIndex: number, fenceLength: number): number {
-  let index = startIndex;
-  while (index < markdown.length) {
-    const next = markdown.indexOf("`", index);
-    if (next < 0) return -1;
-    let runLength = 1;
-    while (markdown[next + runLength] === "`") runLength += 1;
-    if (runLength === fenceLength) return next;
-    index = next + runLength;
-  }
-  return -1;
-}
-
-function stripHtmlCommentsInMarkdownSegment(markdown: string): string {
-  let output = "";
-  let index = 0;
-  let inHtmlComment = false;
-
-  while (index < markdown.length) {
-    if (inHtmlComment) {
-      if (markdown.startsWith("-->", index)) {
-        inHtmlComment = false;
-        index += 3;
-        continue;
-      }
-      const character = markdown[index]!;
-      if (character === "\n" || character === "\r") output += character;
-      index += 1;
-      continue;
-    }
-
-    const backtickMatch = markdown.slice(index).match(/^`+/);
-    if (backtickMatch) {
-      const fence = backtickMatch[0];
-      const closingIndex = findClosingBacktickRun(markdown, index + fence.length, fence.length);
-      if (closingIndex >= 0) {
-        const end = closingIndex + fence.length;
-        output += markdown.slice(index, end);
-        index = end;
-      } else {
-        output += fence;
-        index += fence.length;
-      }
-      continue;
-    }
-
-    if (markdown.startsWith("<!--", index)) {
-      inHtmlComment = true;
-      index += 4;
-      continue;
-    }
-
-    output += markdown[index]!;
-    index += 1;
-  }
-
-  return output;
-}
-
-function splitYamlFrontMatter(markdown: string): { frontMatter: string; body: string } | null {
-  const match = markdown.match(/^(\uFEFF?---[ \t]*(?:\r?\n)[\s\S]*?(?:\r?\n)(?:---|\.\.\.)[ \t]*(?:\r?\n|$))([\s\S]*)$/);
-  if (!match) return null;
-  return { frontMatter: match[1] ?? "", body: match[2] ?? "" };
-}
-
-function markdownFenceLine(line: string): { character: "`" | "~"; length: number; suffix: string } | null {
-  let candidate = line;
-  candidate = candidate.replace(/^(?:[ \t]{0,3}>[ \t]?)+/, "");
-  candidate = candidate.replace(/^[ \t]{0,3}(?:(?:[*+-])|(?:\d+[.)]))[ \t]+/, "");
-  const match = candidate.trimStart().match(/^(`{3,}|~{3,})(.*)$/);
-  if (!match) return null;
-  const marker = match[1]!;
-  return {
-    character: marker[0] as "`" | "~",
-    length: marker.length,
-    suffix: match[2] ?? "",
-  };
-}
-
-/** Remove authored HTML comments without exposing their Markdown contents through Pandoc's -raw_html mode. */
+/** Remove authored HTML comments without exposing their Markdown contents through Pandoc's raw-HTML boundary. */
 export function stripMarkdownHtmlComments(markdown: string): string {
-  const split = splitYamlFrontMatter(markdown);
-  const frontMatter = split?.frontMatter ?? "";
-  const body = split?.body ?? markdown;
-  const lines = body.split("\n");
-  const output: string[] = [];
-  let plainLines: string[] = [];
-  let fenceCharacter: "`" | "~" | undefined;
-  let fenceLength = 0;
-
-  const flushPlain = (): void => {
-    if (plainLines.length === 0) return;
-    output.push(stripHtmlCommentsInMarkdownSegment(plainLines.join("\n")));
-    plainLines = [];
-  };
-
-  for (const line of lines) {
-    const fence = markdownFenceLine(line);
-    if (!fenceCharacter && fence) {
-      flushPlain();
-      fenceCharacter = fence.character;
-      fenceLength = fence.length;
-      output.push(line);
-      continue;
-    }
-    if (
-      fenceCharacter
-      && fence
-      && fence.character === fenceCharacter
-      && fence.length >= fenceLength
-      && !fence.suffix.trim()
-    ) {
-      fenceCharacter = undefined;
-      fenceLength = 0;
-      output.push(line);
-      continue;
-    }
-
-    if (fenceCharacter) output.push(line);
-    else plainLines.push(line);
-  }
-
-  flushPlain();
-  return `${frontMatter}${output.join("\n")}`;
+  return stripMarkdownHtmlCommentsPreservingYamlFrontMatter(markdown);
 }
 
 function longestFenceRun(text: string, character: "`" | "~"): number {
@@ -475,7 +357,7 @@ export async function renderPandocFragment(
 ): Promise<{ html: string; warnings: string[] }> {
   const inputFormat = format === "latex"
     ? "latex"
-    : "markdown+lists_without_preceding_blankline-blank_before_blockquote-blank_before_header+tex_math_dollars+autolink_bare_uris-raw_html";
+    : "markdown+lists_without_preceding_blankline-blank_before_blockquote-blank_before_header+tex_math_dollars+autolink_bare_uris-raw_html-raw_attribute";
   const pandocInput = format === "latex" ? source : prepareMarkdownForPandoc(source);
   const args = [
     "-f",
@@ -488,6 +370,7 @@ export async function renderPandocFragment(
     "--metadata=pagetitle:pandoc-glance preview",
     "--standalone",
   ];
+  if (format === "markdown") args.push(`--lua-filter=${PANDOC_FIGURE_CROSSREF_FILTER_PATH}`);
   const result = await runPandoc(args, pandocInput);
   const body = result.stdout.match(/<body[^>]*>([\s\S]*)<\/body>/i);
   if (!body) throw new PandocError(`Pandoc did not return a complete HTML body for the ${format} document.`);

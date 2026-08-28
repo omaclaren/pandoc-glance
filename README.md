@@ -42,7 +42,7 @@ pandoc-glance <file> --watch
 | `-h, --help` | Show help |
 | `-v, --version` | Show the version |
 
-Automatic format detection recognizes common Markdown extensions (`.md`, `.markdown`, `.mdown`, `.mkd`, `.qmd`, and `.rmd`) and standalone LaTeX (`.tex` and `.latex`). Use `--format` for another extension. A `.qmd` file is treated as Pandoc Markdown; pandoc-glance does not run Quarto or reproduce project formats such as Reveal.js presentations, books, or websites. Use `quarto preview` when the Quarto build itself is the desired output.
+Automatic format detection recognizes common Markdown extensions (`.md`, `.markdown`, `.mdown`, `.mkd`, `.qmd`, and `.rmd`) and standalone LaTeX (`.tex` and `.latex`). Use `--format` for another extension. A `.qmd` file is treated as Pandoc Markdown, with the limited document-local figure references described below; pandoc-glance does not run Quarto or reproduce project formats such as Reveal.js presentations, books, or websites. Use `quarto preview` when the Quarto build itself is the desired output.
 
 ### Themes
 
@@ -151,7 +151,23 @@ One-shot output inlines local PDF figures up to 16 MB each and 30 MB total, so t
 
 Absolute paths are also supported. In watch mode, an explicitly authored parent-relative or absolute reference outside the document directory is exposed only through an opaque per-render allowlist URL; arbitrary path traversal remains blocked. Resource responses are revisioned and not browser-cached.
 
-HTML comments outside code spans and fenced code blocks are removed before rendering, so private drafting notes do not become visible when raw HTML is disabled.
+### Figure cross-references
+
+Basic labelled-figure references support both Quarto-style identifiers and the `pandoc-crossref` convention:
+
+```markdown
+See @fig-elephant and @fig:whale.
+
+![An Elephant](figures/elephant.png){#fig-elephant}
+
+![A Whale](figures/whale.png){#fig:whale}
+```
+
+Both references become clickable **Figure N** links, and standalone captioned images receive numbered captions. Write `See @fig-elephant`, not `See Figure @fig-elephant`, because the generated link already includes “Figure”. Unlabelled standalone figures still consume a number, so later references remain consistent.
+
+This is deliberately a lightweight, document-local subset. It resolves exact single references only. Missing, duplicate, inline-image, compound, and qualified references remain visibly unresolved and produce terminal warnings. It does not implement table/equation/section references, subfigures, chapter-aware numbering, Quarto project filters, or code execution.
+
+HTML comments outside Markdown code contexts are removed before rendering, so private drafting notes do not become visible when raw HTML is disabled. Valid YAML mapping front matter and comment-like text in fenced, indented, or inline code are preserved.
 
 ### Standalone LaTeX
 
@@ -227,6 +243,7 @@ Watch mode:
 - Binds only to `127.0.0.1`.
 - Uses a random 192-bit token in every preview route.
 - Sets `no-store`, `nosniff`, no-referrer, same-origin, and content-security headers.
+- Disables Pandoc raw HTML and raw attributed blocks; authored HTML is rendered inert.
 - Rejects arbitrary resource-route traversal, including encoded `..`, and rejects symlinks that escape the source directory.
 - Serves a parent-relative or absolute file outside the document directory only when the current document explicitly references it, through an opaque ID.
 
@@ -295,4 +312,4 @@ Fetch the printed loopback URL, save an edit to the fixture or a temporary copy,
 
 ## License
 
-MIT. The rendering palettes and selected normalization/browser-preview patterns were adapted from the MIT-licensed [`pi-markdown-preview`](https://github.com/omaclaren/pi-markdown-preview) and [`pi-studio`](https://github.com/omaclaren/pi-studio) implementations; see [`LICENSE`](LICENSE).
+MIT. The figure-reference filter, Markdown comment scanner, rendering palettes, and selected normalization/browser-preview patterns were adapted from the MIT-licensed [`pi-markdown-preview`](https://github.com/omaclaren/pi-markdown-preview) and [`pi-studio`](https://github.com/omaclaren/pi-studio) implementations; see [`LICENSE`](LICENSE).
