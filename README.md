@@ -77,7 +77,8 @@ pandoc-glance --watch --no-open --port 0 notes.md
 Watch mode:
 
 - Opens one browser tab and updates it after each saved change.
-- Handles ordinary writes and atomic saves.
+- Handles ordinary writes and atomic saves, collapsing save bursts to the latest pending content.
+- Skips redundant renders when the saved content has not changed.
 - Preserves reading position across reloads.
 - Keeps the last successful preview visible after a render error and recovers on the next valid save.
 
@@ -149,7 +150,7 @@ PNG/JPEG/SVG-style images and local PDF figures are supported. PDF figures rende
 
 One-shot output inlines local PDF figures up to 16 MB each and 30 MB total, so the browser can render them without `file:` fetch access; larger PDFs retain the **Open PDF** fallback.
 
-Absolute paths are also supported. In watch mode, an explicitly authored parent-relative or absolute reference outside the document directory is exposed only through an opaque per-render allowlist URL; arbitrary path traversal remains blocked. Resource responses are revisioned and not browser-cached.
+Absolute paths are also supported. In watch mode, an explicitly authored parent-relative or absolute supported-media reference outside the document directory is exposed only through an opaque per-render allowlist URL; arbitrary path traversal remains blocked. Resource responses are revisioned and not browser-cached.
 
 ### Figure cross-references
 
@@ -238,14 +239,16 @@ Without network access, the core preview still works. Mermaid remains visible as
 
 ## Security model
 
-Watch mode:
+One-shot pages carry a nonce-based Content Security Policy in the generated HTML. Watch mode:
 
 - Binds only to `127.0.0.1`.
 - Uses a random 192-bit token in every preview route.
+- Uses a fresh script nonce for every page response with `strict-dynamic`; inline/eval JavaScript and `javascript:` links cannot execute.
 - Sets `no-store`, `nosniff`, no-referrer, same-origin, and content-security headers.
 - Disables Pandoc raw HTML and raw attributed blocks; authored HTML is rendered inert.
 - Rejects arbitrary resource-route traversal, including encoded `..`, and rejects symlinks that escape the source directory.
-- Serves a parent-relative or absolute file outside the document directory only when the current document explicitly references it, through an opaque ID.
+- Serves only browser-preview media types: common images, audio/video, and PDF. Source, script, HTML, and unknown file types receive `415 Unsupported Media Type`.
+- Serves a supported parent-relative or absolute media file outside the document directory only when the current document explicitly references it, through an opaque ID.
 
 A failed render keeps the previous HTML and resource allowlist.
 
@@ -282,7 +285,7 @@ The CLI uses the operating system default-browser command (`open`, `xdg-open`, o
 
 - Check the path relative to the source file, not the shell's current directory.
 - Put paths containing spaces or parentheses in Markdown angle brackets.
-- In watch mode, a relative symlink whose target is outside the document directory is deliberately blocked; use an explicit absolute path if that file should be allowlisted.
+- In watch mode, a relative symlink whose target is outside the document directory is deliberately blocked; use an explicit absolute path for a supported media file that should be allowlisted.
 - Save the image and source file. Resource responses are not browser-cached.
 
 ### The selected port is busy

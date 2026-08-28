@@ -2,8 +2,14 @@ import { randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { extname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
+import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import type { AddressInfo } from "node:net";
+import { previewResourceContentType } from "./resource-types.js";
+import {
+  createPreviewScriptNonce,
+  preparePreviewHtmlForHttp,
+  previewContentSecurityPolicy,
+} from "./security.js";
 
 export interface PreviewServerOptions {
   resourceRoot: string;
@@ -25,35 +31,6 @@ export interface PreviewServerPaths {
   resource: string;
   asset: string;
 }
-
-const MIME_TYPES: Record<string, string> = {
-  ".avif": "image/avif",
-  ".bmp": "image/bmp",
-  ".css": "text/css; charset=utf-8",
-  ".csv": "text/csv; charset=utf-8",
-  ".gif": "image/gif",
-  ".htm": "text/html; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".ico": "image/x-icon",
-  ".jpeg": "image/jpeg",
-  ".jpg": "image/jpeg",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".m4a": "audio/mp4",
-  ".md": "text/markdown; charset=utf-8",
-  ".mp3": "audio/mpeg",
-  ".mp4": "video/mp4",
-  ".ogg": "audio/ogg",
-  ".pdf": "application/pdf",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".tex": "text/x-tex; charset=utf-8",
-  ".txt": "text/plain; charset=utf-8",
-  ".wav": "audio/wav",
-  ".webm": "video/webm",
-  ".webp": "image/webp",
-  ".xml": "application/xml; charset=utf-8",
-};
 
 export class ResourceAccessError extends Error {
   readonly statusCode: number;
@@ -122,10 +99,6 @@ export async function resolveSafeResourcePath(canonicalRoot: string, requestedPa
   return canonicalCandidate;
 }
 
-function contentType(filePath: string): string {
-  return MIME_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream";
-}
-
 function securityHeaders(): Record<string, string> {
   return {
     "Cache-Control": "no-store",
@@ -156,10 +129,15 @@ function respondJson(response: ServerResponse, statusCode: number, body: unknown
 }
 
 async function respondFile(request: IncomingMessage, response: ServerResponse, filePath: string): Promise<void> {
+  const mimeType = previewResourceContentType(filePath);
+  if (!mimeType) {
+    respondText(response, 415, "Unsupported preview resource type.");
+    return;
+  }
   const metadata = await stat(filePath);
   response.writeHead(200, {
     ...securityHeaders(),
-    "Content-Type": contentType(filePath),
+    "Content-Type": mimeType,
     "Content-Length": metadata.size,
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
   });
@@ -357,13 +335,15 @@ export class PreviewServer {
         respondText(response, 503, "Preview is starting.");
         return;
       }
+      const scriptNonce = createPreviewScriptNonce();
+      const responseHtml = preparePreviewHtmlForHttp(this.#html, scriptNonce);
       response.writeHead(200, {
         ...securityHeaders(),
         "Content-Type": "text/html; charset=utf-8",
-        "Content-Security-Policy": "default-src 'self' data: https://cdn.jsdelivr.net; img-src 'self' data: https:; media-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self' https://unpkg.com; worker-src 'self' blob: https://cdn.jsdelivr.net; object-src 'none'; base-uri 'none'",
+        "Content-Security-Policy": previewContentSecurityPolicy(scriptNonce, "http"),
       });
       if (request.method === "HEAD") response.end();
-      else response.end(this.#html);
+      else response.end(responseHtml);
       return;
     }
 

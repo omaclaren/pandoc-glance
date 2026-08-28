@@ -172,6 +172,55 @@ describe("watch preview", () => {
     }
   });
 
+  it("collapses save bursts to one latest pending render", async () => {
+    const fixture = await temporarySource("initial");
+    const calls: string[] = [];
+    let releaseBlockedRender = (): void => undefined;
+    const blockedRender = new Promise<void>((resolvePromise) => {
+      releaseBlockedRender = resolvePromise;
+    });
+    let markBlockedRenderStarted = (): void => undefined;
+    const blockedRenderStarted = new Promise<void>((resolvePromise) => {
+      markBlockedRenderStarted = resolvePromise;
+    });
+    const renderer: WatchRenderer = async (source, context) => {
+      calls.push(source);
+      if (source === "one") {
+        markBlockedRenderStarted();
+        await blockedRender;
+      }
+      return { html: `<!doctype html><body data-revision="${context.revision}">${source}</body>` };
+    };
+    const session = await startWatchPreview({
+      inputPath: fixture.filePath,
+      format: "markdown",
+      theme: "light",
+      fontSizePx: 15,
+      debounceMs: 10,
+      renderer,
+    });
+
+    try {
+      await writeFile(fixture.filePath, "one", "utf8");
+      await blockedRenderStarted;
+      for (const source of ["two", "three", "four"]) {
+        await writeFile(fixture.filePath, source, "utf8");
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 120));
+      }
+      releaseBlockedRender();
+      await waitFor(() => calls.includes("four") && session.state.revision === 3, "latest burst render");
+      await session.waitForIdle();
+
+      assert.deepEqual(calls, ["initial", "one", "four"]);
+      const page = await (await fetch(session.url)).text();
+      assert.match(page, />four<\/body>/);
+    } finally {
+      releaseBlockedRender();
+      await session.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("shuts down without leaving a reachable server", async () => {
     const fixture = await temporarySource("# Shutdown");
     const session = await startWatchPreview({

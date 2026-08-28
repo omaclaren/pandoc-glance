@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import {
@@ -145,15 +146,19 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
 
   const renderer = options.renderer ?? defaultRenderer;
   const log = options.onLog ?? (() => undefined);
-  let renderChain = Promise.resolve();
+  let renderInFlight: Promise<void> | null = null;
+  let renderQueued = false;
   let closed = false;
   let lastStatus: "starting" | "success" | "error" = "starting";
+  let lastSuccessfulSourceHash: string | null = null;
 
   const renderOnce = async (): Promise<void> => {
     if (closed) return;
     const revision = server.state.revision + 1;
     try {
       const source = await readFile(inputPath, "utf8");
+      const sourceHash = createHash("sha256").update(source).digest("hex");
+      if (server.state.status === "success" && sourceHash === lastSuccessfulSourceHash) return;
       const rendered = await renderer(source, {
         revision,
         sourcePath: inputPath,
@@ -168,6 +173,11 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
       });
       if (closed) return;
       server.publishSuccess(revision, rendered.html, rendered.assets ?? new Map());
+      lastSuccessfulSourceHash = sourceHash;
+      // Reconcile after rendering in case a save landed while the read/render was
+      // in flight and its filesystem event was coalesced. The content hash makes
+      // the ordinary unchanged case a cheap no-op.
+      renderQueued = true;
       for (const warning of rendered.warnings ?? []) log(`Pandoc: ${warning}`, "warning");
       if (lastStatus === "error") log(`Render recovered (revision ${revision}).`, "info");
       else log(`Rendered revision ${revision}.`, "info");
@@ -197,8 +207,21 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
   };
 
   const enqueueRender = (): Promise<void> => {
-    renderChain = renderChain.then(renderOnce, renderOnce);
-    return renderChain;
+    if (closed) return Promise.resolve();
+    renderQueued = true;
+    if (renderInFlight) return renderInFlight;
+
+    const loop = (async (): Promise<void> => {
+      while (!closed && renderQueued) {
+        renderQueued = false;
+        await renderOnce();
+      }
+    })();
+    const tracked = loop.finally(() => {
+      if (renderInFlight === tracked) renderInFlight = null;
+    });
+    renderInFlight = tracked;
+    return tracked;
   };
 
   const watcherOptions = {
@@ -223,9 +246,10 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
     server,
     watcher,
     initialError,
-    getRenderChain: () => renderChain,
+    getRenderChain: () => renderInFlight ?? Promise.resolve(),
     onBeforeClose: () => {
       closed = true;
+      renderQueued = false;
     },
   });
   return session;

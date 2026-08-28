@@ -15,20 +15,26 @@ afterEach(async () => {
 async function makeFixtureTree(): Promise<{
   root: string;
   validFile: string;
+  unsupportedFile: string;
   secretFile: string;
+  outsidePdf: string;
   symlinkPath: string;
 }> {
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "pandoc-glance-server-"));
   const root = join(temporaryDirectory, "document");
   await mkdir(join(root, "assets"), { recursive: true });
   const validFile = join(root, "assets", "fixture file.svg");
+  const unsupportedFile = join(root, "assets", "notes.txt");
   const secretFile = join(temporaryDirectory, "secret.txt");
+  const outsidePdf = join(temporaryDirectory, "figure.pdf");
   const symlinkPath = join(root, "assets", "escaped.txt");
   await writeFile(validFile, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>", "utf8");
+  await writeFile(unsupportedFile, "same-directory source should remain private", "utf8");
   await writeFile(secretFile, "not public", "utf8");
+  await writeFile(outsidePdf, "%PDF-1.4\n", "utf8");
   await symlink(secretFile, symlinkPath);
   cleanupTasks.push(() => rm(temporaryDirectory, { recursive: true, force: true }));
-  return { root, validFile, secretFile, symlinkPath };
+  return { root, validFile, unsupportedFile, secretFile, outsidePdf, symlinkPath };
 }
 
 function rawRequest(url: URL, host?: string): Promise<{ status: number; body: string; headers: IncomingMessage["headers"] }> {
@@ -139,9 +145,13 @@ describe("preview HTTP server", () => {
     assert.equal(await documentResponse.text(), "<!doctype html><title>ok</title>");
     assert.equal(documentResponse.headers.get("cache-control"), "no-store");
     const documentCsp = documentResponse.headers.get("content-security-policy") ?? "";
-    assert.match(documentCsp, /connect-src 'self' https:\/\/unpkg\.com/);
+    assert.match(documentCsp, /connect-src 'self'[^;]*https:\/\/unpkg\.com/);
     assert.match(documentCsp, /worker-src 'self' blob: https:\/\/cdn\.jsdelivr\.net/);
     assert.match(documentCsp, /object-src 'none'/);
+    const scriptDirective = documentCsp.split(";").find((directive) => /^\s*script-src\s/.test(directive)) ?? "";
+    assert.match(scriptDirective, /'nonce-[A-Za-z0-9_-]+'/);
+    assert.match(scriptDirective, /'strict-dynamic'/);
+    assert.doesNotMatch(scriptDirective, /'unsafe-inline'|'unsafe-eval'/);
 
     const origin = new URL(server.url).origin;
     assert.equal((await fetch(`${origin}/`)).status, 404);
@@ -149,7 +159,39 @@ describe("preview HTTP server", () => {
     assert.equal(invalidHost.status, 403);
   });
 
-  it("serves in-root resources and rejects traversal, encoded traversal, absolute paths, and symlink escape", async () => {
+  it("uses a fresh nonce for only the trusted bootstrap script", async () => {
+    const fixture = await makeFixtureTree();
+    const server = await PreviewServer.create({ resourceRoot: fixture.root });
+    await server.start();
+    cleanupTasks.push(() => server.close());
+    server.publishSuccess(1, [
+      "<!doctype html>",
+      '<meta id="pandoc-glance-csp" http-equiv="Content-Security-Policy" content="script-src nonce-old" />',
+      '<a href="javascript:globalThis.__unsafe = true">Unsafe</a>',
+      '<script type="module" data-pandoc-glance-trusted="true" nonce="stored-nonce">globalThis.__trusted = true;</script>',
+      "<script>globalThis.__untrusted = true;</script>",
+    ].join(""));
+
+    const first = await fetch(server.url);
+    const firstBody = await first.text();
+    const firstCsp = first.headers.get("content-security-policy") ?? "";
+    const firstNonce = /script-src 'nonce-([A-Za-z0-9_-]+)'/.exec(firstCsp)?.[1];
+    assert.ok(firstNonce);
+    assert.match(firstCsp, /script-src 'nonce-[^']+' 'strict-dynamic'/);
+    assert.doesNotMatch(firstCsp.split(";").find((directive) => /^\s*script-src\s/.test(directive)) ?? "", /unsafe-inline|unsafe-eval/);
+    assert.doesNotMatch(firstBody, /http-equiv="Content-Security-Policy"/i);
+    assert.match(firstBody, new RegExp(`<script type="module" data-pandoc-glance-trusted="true" nonce="${firstNonce}">`));
+    assert.match(firstBody, /<script>globalThis\.__untrusted = true;<\/script>/);
+    assert.doesNotMatch(firstBody, /<script nonce="[^"]+">globalThis\.__untrusted/);
+
+    const second = await fetch(server.url);
+    const secondCsp = second.headers.get("content-security-policy") ?? "";
+    const secondNonce = /script-src 'nonce-([A-Za-z0-9_-]+)'/.exec(secondCsp)?.[1];
+    assert.ok(secondNonce);
+    assert.notEqual(secondNonce, firstNonce);
+  });
+
+  it("serves supported in-root media and rejects unsupported types, traversal, absolute paths, and symlink escape", async () => {
     const fixture = await makeFixtureTree();
     const server = await PreviewServer.create({ resourceRoot: fixture.root });
     await server.start();
@@ -165,6 +207,12 @@ describe("preview HTTP server", () => {
     assert.equal(valid.headers.get("content-type"), "image/svg+xml");
     assert.match(valid.headers.get("content-security-policy") ?? "", /default-src 'none'.*sandbox/);
     assert.match(await valid.text(), /<svg/);
+
+    const unsupportedUrl = new URL(endpoint);
+    unsupportedUrl.searchParams.set("path", "assets/notes.txt");
+    const unsupported = await fetch(unsupportedUrl);
+    assert.equal(unsupported.status, 415);
+    assert.doesNotMatch(await unsupported.text(), /same-directory source should remain private/);
 
     const traversal = await fetch(`${endpoint}?path=${encodeURIComponent("../secret.txt")}`);
     assert.equal(traversal.status, 403);
@@ -185,12 +233,20 @@ describe("preview HTTP server", () => {
     await server.start();
     cleanupTasks.push(() => server.close());
     const assetId = "abcdefghijklmnopqrstuvwx";
-    server.publishSuccess(2, "ok", new Map([[assetId, fixture.secretFile]]));
+    const unsupportedAssetId = "bcdefghijklmnopqrstuvwxy";
+    server.publishSuccess(2, "ok", new Map([
+      [assetId, fixture.outsidePdf],
+      [unsupportedAssetId, fixture.secretFile],
+    ]));
     const origin = new URL(server.url).origin;
 
     const allowed = await fetch(`${origin}${server.paths.asset}/${assetId}`);
     assert.equal(allowed.status, 200);
-    assert.equal(await allowed.text(), "not public");
+    assert.equal(allowed.headers.get("content-type"), "application/pdf");
+    assert.equal(await allowed.text(), "%PDF-1.4\n");
+    const unsupported = await fetch(`${origin}${server.paths.asset}/${unsupportedAssetId}`);
+    assert.equal(unsupported.status, 415);
+    assert.doesNotMatch(await unsupported.text(), /not public/);
     assert.equal((await fetch(`${origin}${server.paths.asset}/zyxwvutsrqponmlkjihgfedc`)).status, 404);
   });
 

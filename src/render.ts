@@ -4,6 +4,13 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripMarkdownHtmlCommentsPreservingYamlFrontMatter } from "./markdown-comments.js";
+import { previewResourceContentType } from "./resource-types.js";
+import {
+  createPreviewScriptNonce,
+  PREVIEW_CSP_META_ID,
+  previewContentSecurityPolicy,
+  TRUSTED_PREVIEW_SCRIPT_ATTRIBUTE,
+} from "./security.js";
 import { buildPreviewCss, palettesForClient, type PreviewTheme } from "./styles.js";
 
 export type PreviewFormat = "markdown" | "latex";
@@ -547,6 +554,7 @@ async function rewriteServerResourceUrls(
       const localPath = localReference.path;
       const absolutePath = isAbsolute(localPath) || win32.isAbsolute(localPath);
       const candidatePath = absolutePath ? localPath : resolve(resourceRoot, localPath);
+      if (!previewResourceContentType(candidatePath)) continue;
       let rewritten: string;
 
       if (pathIsWithin(resourceRoot, candidatePath)) {
@@ -1193,19 +1201,22 @@ export function buildPreviewHtml(options: BuildHtmlOptions): string {
     : "";
   const clientScript = buildClientScript(options.theme, options.liveReload).replace(/<\/script/gi, "<\\/script");
   const css = buildPreviewCss(options.theme, options.fontSizePx);
+  const scriptNonce = createPreviewScriptNonce();
+  const contentSecurityPolicy = previewContentSecurityPolicy(scriptNonce, "file");
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta id="${PREVIEW_CSP_META_ID}" http-equiv="Content-Security-Policy" content="${encodeHtmlAttribute(contentSecurityPolicy)}" />
 ${baseTag}<title>${escapeHtml(options.title)}</title>
 <style>${css}</style>
 </head>
 <body>
 <article id="preview-root">${options.fragmentHtml}</article>
 <div id="preview-status" role="status" aria-live="polite" hidden></div>
-<script type="module">${clientScript}</script>
+<script type="module" ${TRUSTED_PREVIEW_SCRIPT_ATTRIBUTE}="true" nonce="${scriptNonce}">${clientScript}</script>
 </body>
 </html>`;
 }

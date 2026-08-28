@@ -90,6 +90,9 @@ describe("Pandoc rendering", () => {
     assert.match(rendered.html, /ensureReadableColor/);
     assert.match(rendered.html, /className = "mermaid-error"/);
     assert.match(rendered.html, /mathjax@3/);
+    assert.match(rendered.html, /id="pandoc-glance-csp" http-equiv="Content-Security-Policy"/);
+    assert.match(rendered.html, /<script type="module" data-pandoc-glance-trusted="true" nonce="[A-Za-z0-9_-]+">/);
+    assert.doesNotMatch(rendered.html, /script-src[^;\"]*unsafe-inline|unsafe-eval/);
   });
 
   it("renders a standalone LaTeX document and its local figure", async (context) => {
@@ -245,6 +248,22 @@ describe("Pandoc rendering", () => {
     assert.match(rendered.fragmentHtml, /&lt;script&gt;globalThis\.__unsafe = true&lt;\/script&gt;/);
   });
 
+  it("places javascript links under a nonce-only script policy", async (context) => {
+    if (!requirePandoc(context)) return;
+    const rendered = await renderDocument({
+      source: "[Unsafe](javascript:globalThis.__pandocGlanceUnsafe=true)",
+      sourcePath: join(fixtureDirectory, "unsafe-link.md"),
+      resourceRoot: fixtureDirectory,
+      format: "markdown",
+      theme: "light",
+      fontSizePx: 15,
+    });
+    assert.match(rendered.fragmentHtml, /href="javascript:globalThis\.__pandocGlanceUnsafe=true"/);
+    assert.match(rendered.html, /script-src &#39;nonce-[A-Za-z0-9_-]+&#39; &#39;strict-dynamic&#39;/);
+    assert.doesNotMatch(rendered.html, /script-src[^;\"]*unsafe-inline|unsafe-eval/);
+    assert.match(rendered.html, /script-src-attr &#39;none&#39;/);
+  });
+
   it("does not misinterpret plain escaped brackets and parentheses as math", async (context) => {
     if (!requirePandoc(context)) return;
     const sourcePath = join(fixtureDirectory, "sample.md");
@@ -337,7 +356,7 @@ describe("Pandoc rendering", () => {
     }
   });
 
-  it("does not rewrite attribute-like text inside rendered code", async (context) => {
+  it("does not expose attribute-like code or unsupported local file types", async (context) => {
     if (!requirePandoc(context)) return;
     const temporaryRoot = await mkdtemp(join(tmpdir(), "pandoc-glance-render-code-"));
     const documentDirectory = join(temporaryRoot, "document");
@@ -347,7 +366,7 @@ describe("Pandoc rendering", () => {
 
     try {
       const rendered = await renderDocument({
-        source: `Inline code: \`href="${outsideFile}"\`.`,
+        source: `Inline code: \`href="${outsideFile}"\`.\n\n[Unsupported local file](${outsideFile})`,
         sourcePath: join(documentDirectory, "notes.md"),
         resourceRoot: documentDirectory,
         format: "markdown",
@@ -409,7 +428,7 @@ describe("Pandoc rendering", () => {
       theme: "auto",
       fontSizePx: 15,
     });
-    const scriptMatch = rendered.html.match(/<script type="module">([\s\S]*?)<\/script>/);
+    const scriptMatch = rendered.html.match(/<script\b[^>]*\bdata-pandoc-glance-trusted="true"[^>]*>([\s\S]*?)<\/script>/);
     assert.ok(scriptMatch);
     const temporaryDirectory = await mkdtemp(join(tmpdir(), "pandoc-glance-script-"));
     const scriptPath = join(temporaryDirectory, "client.mjs");
