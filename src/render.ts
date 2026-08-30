@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  appendLocalResourceSuffix,
+  parseLocalResourceReference,
+  type LocalResourceReference,
+} from "./local-resource.js";
 import { stripMarkdownHtmlCommentsPreservingYamlFrontMatter } from "./markdown-comments.js";
 import { previewResourceContentType } from "./resource-types.js";
 import {
@@ -39,6 +44,7 @@ export interface RenderDocumentOptions {
   title?: string;
   liveReload?: LiveReloadConfig;
   serverResources?: ServerResourceConfig;
+  signal?: AbortSignal;
 }
 
 export interface RenderDocumentResult {
@@ -110,7 +116,16 @@ interface PandocProcessResult {
   stderr: string;
 }
 
-async function runPandoc(args: string[], input?: string): Promise<PandocProcessResult> {
+function renderCancelledError(): PandocError {
+  return new PandocError("Preview rendering was cancelled.");
+}
+
+function throwIfRenderingAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw renderCancelledError();
+}
+
+async function runPandoc(args: string[], input?: string, signal?: AbortSignal): Promise<PandocProcessResult> {
+  throwIfRenderingAborted(signal);
   const command = pandocCommand();
 
   return await new Promise<PandocProcessResult>((resolvePromise, rejectPromise) => {
@@ -120,15 +135,24 @@ async function runPandoc(args: string[], input?: string): Promise<PandocProcessR
     let stdoutBytes = 0;
     let settled = false;
     let timedOut = false;
+    let timeout: NodeJS.Timeout | undefined;
 
+    const cleanup = (): void => {
+      if (timeout) clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+    };
     const finishWithError = (error: Error): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      cleanup();
       rejectPromise(error);
     };
+    const onAbort = (): void => {
+      child.kill("SIGKILL");
+      finishWithError(renderCancelledError());
+    };
 
-    const timeout = setTimeout(() => {
+    timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
     }, PANDOC_TIMEOUT_MS);
@@ -162,17 +186,17 @@ async function runPandoc(args: string[], input?: string): Promise<PandocProcessR
       finishWithError(new PandocError(`Failed to start Pandoc: ${error.message}`, { cause: error }));
     });
 
-    child.once("close", (code, signal) => {
+    child.once("close", (code, closeSignal) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      cleanup();
       const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
       if (timedOut) {
         rejectPromise(new PandocError(`Pandoc timed out after ${PANDOC_TIMEOUT_MS / 1000} seconds.`));
         return;
       }
       if (code !== 0) {
-        const status = code === null ? `signal ${signal ?? "unknown"}` : `exit code ${code}`;
+        const status = code === null ? `signal ${closeSignal ?? "unknown"}` : `exit code ${code}`;
         rejectPromise(new PandocError(`Pandoc failed with ${status}${stderr ? `: ${stderr}` : "."}`));
         return;
       }
@@ -185,12 +209,14 @@ async function runPandoc(args: string[], input?: string): Promise<PandocProcessR
     child.stdin.on("error", (error: NodeJS.ErrnoException) => {
       if (error.code !== "EPIPE") finishWithError(new PandocError(`Could not send input to Pandoc: ${error.message}`));
     });
-    child.stdin.end(input ?? "");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    else child.stdin.end(input ?? "");
   });
 }
 
-export async function assertPandocAvailable(): Promise<void> {
-  await runPandoc(["--version"]);
+export async function assertPandocAvailable(signal?: AbortSignal): Promise<void> {
+  await runPandoc(["--version"], undefined, signal);
 }
 
 function isLikelyMathExpression(expression: string): boolean {
@@ -361,6 +387,7 @@ export async function renderPandocFragment(
   source: string,
   format: PreviewFormat,
   resourceRoot: string,
+  signal?: AbortSignal,
 ): Promise<{ html: string; warnings: string[] }> {
   const inputFormat = format === "latex"
     ? "latex"
@@ -378,7 +405,7 @@ export async function renderPandocFragment(
     "--standalone",
   ];
   if (format === "markdown") args.push(`--lua-filter=${PANDOC_FIGURE_CROSSREF_FILTER_PATH}`);
-  const result = await runPandoc(args, pandocInput);
+  const result = await runPandoc(args, pandocInput, signal);
   const body = result.stdout.match(/<body[^>]*>([\s\S]*)<\/body>/i);
   if (!body) throw new PandocError(`Pandoc did not return a complete HTML body for the ${format} document.`);
   const html = body[1]!.trimStart();
@@ -414,23 +441,8 @@ function encodeHtmlAttribute(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-function decodeLocalReference(rawValue: string): { path: string; hash: string } | null {
-  const value = decodeHtmlAttribute(rawValue).trim();
-  if (!value || value.startsWith("#") || value.startsWith("//")) return null;
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) && !/^file:/i.test(value) && !win32.isAbsolute(value)) return null;
-
-  const hashIndex = value.indexOf("#");
-  const hash = hashIndex >= 0 ? value.slice(hashIndex) : "";
-  const withoutHash = hashIndex >= 0 ? value.slice(0, hashIndex) : value;
-  const queryIndex = withoutHash.indexOf("?");
-  const withoutQuery = queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash;
-
-  try {
-    if (/^file:/i.test(withoutQuery)) return { path: fileURLToPath(withoutQuery), hash };
-    return { path: decodeURIComponent(withoutQuery), hash };
-  } catch {
-    return { path: withoutQuery, hash };
-  }
+function decodeLocalReference(rawValue: string): LocalResourceReference | null {
+  return parseLocalResourceReference(decodeHtmlAttribute(rawValue));
 }
 
 function pathIsWithin(root: string, candidate: string): boolean {
@@ -464,13 +476,18 @@ function tagAttribute(tag: string, name: string): string | null {
   return match ? decodeHtmlAttribute(match[2] ?? match[3] ?? "") : null;
 }
 
-async function inlineOneShotPdfSources(fragmentHtml: string, resourceRoot: string): Promise<string> {
+async function inlineOneShotPdfSources(
+  fragmentHtml: string,
+  resourceRoot: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const replacements: Array<{ start: number; end: number; value: string }> = [];
   const tagPattern = /<embed\b[^>]*\bdata-preview-pdf=(?:"true"|'true')[^>]*>/gi;
   let totalBytes = 0;
   let match: RegExpExecArray | null;
 
   while ((match = tagPattern.exec(fragmentHtml)) !== null) {
+    throwIfRenderingAborted(signal);
     const tag = match[0];
     const src = tagAttribute(tag, "src");
     const localReference = src ? decodeLocalReference(src) : null;
@@ -485,7 +502,7 @@ async function inlineOneShotPdfSources(fragmentHtml: string, resourceRoot: strin
       const metadata = await stat(canonicalPath);
       if (!metadata.isFile() || metadata.size > ONE_SHOT_PDF_MAX_BYTES) continue;
       if (totalBytes + metadata.size > ONE_SHOT_PDF_TOTAL_BYTES) continue;
-      const pdf = await readFile(canonicalPath);
+      const pdf = await readFile(canonicalPath, signal ? { signal } : undefined);
       totalBytes += pdf.length;
       const dataUri = `data:application/pdf;base64,${pdf.toString("base64")}`;
       let replacement = tag.replace(
@@ -498,6 +515,7 @@ async function inlineOneShotPdfSources(fragmentHtml: string, resourceRoot: strin
       );
       replacements.push({ start: match.index, end: match.index + tag.length, value: replacement });
     } catch {
+      throwIfRenderingAborted(signal);
       // Leave a direct Open PDF link when a local figure cannot be inlined.
     }
   }
@@ -535,6 +553,7 @@ async function rewriteServerResourceUrls(
   fragmentHtml: string,
   resourceRoot: string,
   config: ServerResourceConfig,
+  signal?: AbortSignal,
 ): Promise<RewriteResult> {
   const assets = new Map<string, string>();
   const replacements: Array<{ start: number; end: number; value: string }> = [];
@@ -542,6 +561,7 @@ async function rewriteServerResourceUrls(
   let tagMatch: RegExpExecArray | null;
 
   while ((tagMatch = tagPattern.exec(fragmentHtml)) !== null) {
+    throwIfRenderingAborted(signal);
     const tag = tagMatch[0];
     const attributePattern = /\b(?:src|href|poster|data)\s*=\s*("([^"]*)"|'([^']*)')/gi;
     let attributeMatch: RegExpExecArray | null;
@@ -559,7 +579,10 @@ async function rewriteServerResourceUrls(
 
       if (pathIsWithin(resourceRoot, candidatePath)) {
         const relativePath = relative(resolve(resourceRoot), resolve(candidatePath));
-        rewritten = `${config.resourcePath}?path=${encodeURIComponent(relativePath)}&v=${config.revision}${localReference.hash}`;
+        rewritten = appendLocalResourceSuffix(
+          `${config.resourcePath}?path=${encodeURIComponent(relativePath)}&v=${config.revision}`,
+          localReference,
+        );
       } else {
         try {
           // An authored ../ or absolute reference outside the normal resource root is
@@ -570,8 +593,12 @@ async function rewriteServerResourceUrls(
           if (!metadata.isFile()) continue;
           const assetId = createHash("sha256").update(canonicalPath).digest("base64url").slice(0, 24);
           assets.set(assetId, canonicalPath);
-          rewritten = `${config.assetPath}/${assetId}?v=${config.revision}${localReference.hash}`;
+          rewritten = appendLocalResourceSuffix(
+            `${config.assetPath}/${assetId}?v=${config.revision}`,
+            localReference,
+          );
         } catch {
+          throwIfRenderingAborted(signal);
           continue;
         }
       }
@@ -1239,17 +1266,24 @@ export function buildInitialErrorHtml(options: {
 }
 
 export async function renderDocument(options: RenderDocumentOptions): Promise<RenderDocumentResult> {
-  const rendered = await renderPandocFragment(options.source, options.format, options.resourceRoot);
+  const rendered = await renderPandocFragment(options.source, options.format, options.resourceRoot, options.signal);
+  throwIfRenderingAborted(options.signal);
   let fragmentHtml = markLocalPdfEmbeds(rendered.html);
   let assets = new Map<string, string>();
 
   if (options.serverResources) {
-    const rewritten = await rewriteServerResourceUrls(fragmentHtml, options.resourceRoot, options.serverResources);
+    const rewritten = await rewriteServerResourceUrls(
+      fragmentHtml,
+      options.resourceRoot,
+      options.serverResources,
+      options.signal,
+    );
     fragmentHtml = rewritten.html;
     assets = rewritten.assets;
   } else {
-    fragmentHtml = await inlineOneShotPdfSources(fragmentHtml, options.resourceRoot);
+    fragmentHtml = await inlineOneShotPdfSources(fragmentHtml, options.resourceRoot, options.signal);
   }
+  throwIfRenderingAborted(options.signal);
   fragmentHtml = replaceMarkedPdfEmbedsWithPlaceholders(fragmentHtml);
 
   const htmlOptions: BuildHtmlOptions = {

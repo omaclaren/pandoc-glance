@@ -47,7 +47,7 @@ describe("CLI argument parsing", () => {
   it("recognizes help and version without an input file", () => {
     assert.equal(parseCliArgs(["--help"]).action, "help");
     assert.equal(parseCliArgs(["-v"]).action, "version");
-    assert.match(helpText(), /^pandoc-glance 0\.2\.0/m);
+    assert.match(helpText(), /^pandoc-glance 0\.2\.1/m);
     assert.match(helpText(), /pandoc-glance --watch \[options\] <file>/);
   });
 
@@ -61,7 +61,7 @@ describe("CLI argument parsing", () => {
         ["--import", "tsx", linkedCli, "--version"],
         { cwd: repositoryRoot },
       );
-      assert.equal(stdout.trim(), "0.2.0");
+      assert.equal(stdout.trim(), "0.2.1");
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });
     }

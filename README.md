@@ -150,7 +150,7 @@ PNG/JPEG/SVG-style images and local PDF figures are supported. PDF figures rende
 
 One-shot output inlines local PDF figures up to 16 MB each and 30 MB total, so the browser can render them without `file:` fetch access; larger PDFs retain the **Open PDF** fallback.
 
-Absolute paths are also supported. In watch mode, an explicitly authored parent-relative or absolute supported-media reference outside the document directory is exposed only through an opaque per-render allowlist URL; arbitrary path traversal remains blocked. Resource responses are revisioned and not browser-cached.
+Absolute paths are also supported. In watch mode, an explicitly authored parent-relative or absolute supported-media reference outside the document directory is exposed only through an opaque per-render allowlist URL; arbitrary path traversal remains blocked. Authored query strings and fragments are retained when local URLs are rewritten. Resource responses are revisioned and not browser-cached.
 
 ### Figure cross-references
 
@@ -247,10 +247,11 @@ One-shot pages carry a nonce-based Content Security Policy in the generated HTML
 - Sets `no-store`, `nosniff`, no-referrer, same-origin, and content-security headers.
 - Disables Pandoc raw HTML and raw attributed blocks; authored HTML is rendered inert.
 - Rejects arbitrary resource-route traversal, including encoded `..`, and rejects symlinks that escape the source directory.
+- Rejects raw, encoded, and mixed-separator UNC paths and Windows device paths before accessing the file system.
 - Serves only browser-preview media types: common images, audio/video, and PDF. Source, script, HTML, and unknown file types receive `415 Unsupported Media Type`.
 - Serves a supported parent-relative or absolute media file outside the document directory only when the current document explicitly references it, through an opaque ID.
 
-A failed render keeps the previous HTML and resource allowlist.
+A failed render keeps the previous HTML and resource allowlist. Shutdown closes the watcher and server immediately and aborts any active Pandoc process.
 
 ## Troubleshooting
 

@@ -21,6 +21,7 @@ export interface WatchRenderContext {
   resourcePath: string;
   assetPath: string;
   storageKey: string;
+  signal: AbortSignal;
 }
 
 export interface WatchRenderResult {
@@ -44,6 +45,7 @@ export interface StartWatchPreviewOptions {
   fontSizePx: number;
   port?: number;
   debounceMs?: number;
+  signal?: AbortSignal;
   renderer?: WatchRenderer;
   onLog?: (message: string, level: "info" | "warning" | "error") => void;
   onStatus?: (status: WatchPreviewStatus) => void;
@@ -97,9 +99,16 @@ export class WatchPreviewSession {
     this.#closeRequested = true;
     this.#onBeforeClose();
     this.#closePromise = (async () => {
-      await this.#watcher.close();
-      await this.#getRenderChain();
-      await this.server.close();
+      const renderChain = this.#getRenderChain();
+      void renderChain.catch(() => undefined);
+      const results = await Promise.allSettled([
+        this.#watcher.close(),
+        this.server.close(),
+      ]);
+      const errors = results
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => result.reason);
+      if (errors.length > 0) throw new AggregateError(errors, "Failed to close the preview session cleanly.");
     })();
     return await this.#closePromise;
   }
@@ -128,6 +137,7 @@ async function defaultRenderer(source: string, context: WatchRenderContext): Pro
       assetPath: context.assetPath,
       revision: context.revision,
     },
+    signal: context.signal,
   });
   return {
     html: rendered.html,
@@ -146,17 +156,29 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
 
   const renderer = options.renderer ?? defaultRenderer;
   const log = options.onLog ?? (() => undefined);
+  const renderAbortController = new AbortController();
   let renderInFlight: Promise<void> | null = null;
   let renderQueued = false;
   let closed = false;
   let lastStatus: "starting" | "success" | "error" = "starting";
   let lastSuccessfulSourceHash: string | null = null;
 
+  const abortRendering = (): void => {
+    closed = true;
+    renderQueued = false;
+    renderAbortController.abort();
+  };
+  options.signal?.addEventListener("abort", abortRendering, { once: true });
+  if (options.signal?.aborted) abortRendering();
+
   const renderOnce = async (): Promise<void> => {
     if (closed) return;
     const revision = server.state.revision + 1;
     try {
-      const source = await readFile(inputPath, "utf8");
+      const source = await readFile(inputPath, {
+        encoding: "utf8",
+        signal: renderAbortController.signal,
+      });
       const sourceHash = createHash("sha256").update(source).digest("hex");
       if (server.state.status === "success" && sourceHash === lastSuccessfulSourceHash) return;
       const rendered = await renderer(source, {
@@ -170,6 +192,7 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
         resourcePath: server.paths.resource,
         assetPath: server.paths.asset,
         storageKey: `pandoc-glance:${server.token}`,
+        signal: renderAbortController.signal,
       });
       if (closed) return;
       server.publishSuccess(revision, rendered.html, rendered.assets ?? new Map());
@@ -234,7 +257,8 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
     await watcher.ready();
     await enqueueRender();
   } catch (error) {
-    closed = true;
+    abortRendering();
+    options.signal?.removeEventListener("abort", abortRendering);
     await watcher.close().catch(() => undefined);
     await server.close().catch(() => undefined);
     throw error;
@@ -248,8 +272,8 @@ export async function startWatchPreview(options: StartWatchPreviewOptions): Prom
     initialError,
     getRenderChain: () => renderInFlight ?? Promise.resolve(),
     onBeforeClose: () => {
-      closed = true;
-      renderQueued = false;
+      options.signal?.removeEventListener("abort", abortRendering);
+      abortRendering();
     },
   });
   return session;

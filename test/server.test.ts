@@ -223,6 +223,20 @@ describe("preview HTTP server", () => {
     const absolute = await fetch(`${endpoint}?path=${encodeURIComponent(fixture.secretFile)}`);
     assert.equal(absolute.status, 403);
 
+    for (const networkPath of [
+      "\\\\server\\share\\figure.svg",
+      "\\/server/share/figure.svg",
+      "%5C%5Cserver%5Cshare%5Cfigure.svg",
+      "%5C%2Fserver%2Fshare%2Ffigure.svg",
+      "\\\\?\\C:\\figure.svg",
+      "\\\\.\\pipe\\preview",
+    ]) {
+      const networkUrl = new URL(endpoint);
+      networkUrl.searchParams.set("path", networkPath);
+      const networkResponse = await fetch(networkUrl);
+      assert.equal(networkResponse.status, 403, `Expected ${networkPath} to be rejected`);
+    }
+
     const symlinkEscape = await fetch(`${endpoint}?path=${encodeURIComponent("assets/escaped.txt")}`);
     assert.equal(symlinkEscape.status, 403);
   });
@@ -274,7 +288,7 @@ describe("preview HTTP server", () => {
 
     const previousUrl = server.url;
     collector.close();
-    await server.close();
+    await Promise.all([server.close(), server.close()]);
     await assert.rejects(fetch(previousUrl));
     cleanupTasks.pop();
   });

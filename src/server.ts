@@ -4,6 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import type { AddressInfo } from "node:net";
+import { isNetworkResourcePath } from "./local-resource.js";
 import { previewResourceContentType } from "./resource-types.js";
 import {
   createPreviewScriptNonce,
@@ -67,6 +68,7 @@ function decodeConservatively(value: string): string {
 export async function resolveSafeResourcePath(canonicalRoot: string, requestedPath: string): Promise<string> {
   const decoded = decodeConservatively(requestedPath);
   if (!decoded || decoded.includes("\0")) throw new ResourceAccessError("Invalid resource path.", 400);
+  if (isNetworkResourcePath(decoded)) throw new ResourceAccessError("Network resource paths are not allowed.");
   if (isAbsolute(decoded) || win32.isAbsolute(decoded)) throw new ResourceAccessError("Absolute resource paths are not allowed.");
 
   const slashNormalized = decoded.replace(/\\/g, "/");
@@ -172,6 +174,7 @@ export class PreviewServer {
 
   #requestedPort: number;
   #server: Server | null = null;
+  #closePromise: Promise<void> | null = null;
   #port = 0;
   #html: string | null = null;
   #assets = new Map<string, string>();
@@ -222,6 +225,7 @@ export class PreviewServer {
   }
 
   async start(): Promise<void> {
+    if (this.#closePromise) await this.#closePromise;
     if (this.#server) return;
     const server = createServer((request, response) => {
       void this.#handleRequest(request, response).catch((error: unknown) => {
@@ -284,6 +288,7 @@ export class PreviewServer {
   }
 
   async close(): Promise<void> {
+    if (this.#closePromise) return await this.#closePromise;
     if (this.#heartbeat) {
       clearInterval(this.#heartbeat);
       this.#heartbeat = null;
@@ -296,7 +301,15 @@ export class PreviewServer {
     this.#port = 0;
     if (!server) return;
     server.closeIdleConnections();
-    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    const closing = new Promise<void>((resolvePromise) => {
+      server.close(() => resolvePromise());
+      server.closeAllConnections();
+    });
+    const tracked = closing.finally(() => {
+      if (this.#closePromise === tracked) this.#closePromise = null;
+    });
+    this.#closePromise = tracked;
+    return await tracked;
   }
 
   #broadcast(): void {

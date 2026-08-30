@@ -27,6 +27,21 @@ async function readState(url: string): Promise<{ revision: number; successfulRev
   return await response.json() as { revision: number; successfulRevision: number; status: string; error: string | null };
 }
 
+async function within<T>(promise: Promise<T>, timeoutMs: number, description: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolvePromise, rejectPromise) => {
+        timeout = setTimeout(() => rejectPromise(new Error(`Timed out waiting for ${description}.`)), timeoutMs);
+        timeout.unref();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 async function observeSseRevision(eventsUrl: string, minimumRevision: number, action: () => Promise<void>): Promise<number> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
@@ -216,6 +231,88 @@ describe("watch preview", () => {
       assert.match(page, />four<\/body>/);
     } finally {
       releaseBlockedRender();
+      await session.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("can cancel the initial render before returning a session", async () => {
+    const fixture = await temporarySource("initial");
+    const controller = new AbortController();
+    let markRenderStarted = (): void => undefined;
+    const renderStarted = new Promise<void>((resolvePromise) => {
+      markRenderStarted = resolvePromise;
+    });
+    const renderer: WatchRenderer = async (_source, context) => {
+      markRenderStarted();
+      await new Promise<void>((_resolvePromise, rejectPromise) => {
+        context.signal.addEventListener("abort", () => rejectPromise(new Error("cancelled")), { once: true });
+      });
+      return { html: "unreachable" };
+    };
+    let session: Awaited<ReturnType<typeof startWatchPreview>> | undefined;
+
+    try {
+      const starting = startWatchPreview({
+        inputPath: fixture.filePath,
+        format: "markdown",
+        theme: "auto",
+        fontSizePx: 15,
+        signal: controller.signal,
+        renderer,
+      });
+      await renderStarted;
+      controller.abort();
+      session = await within(starting, 750, "initial render cancellation");
+      assert.equal(session.state.status, "starting");
+      const url = session.url;
+      await session.close();
+      await assert.rejects(fetch(url));
+    } finally {
+      controller.abort();
+      await session?.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("closes the server without waiting for an in-flight renderer", async () => {
+    const fixture = await temporarySource("initial");
+    let releaseBlockedRender = (): void => undefined;
+    const blockedRender = new Promise<void>((resolvePromise) => {
+      releaseBlockedRender = resolvePromise;
+    });
+    let markBlockedRenderStarted = (): void => undefined;
+    const blockedRenderStarted = new Promise<void>((resolvePromise) => {
+      markBlockedRenderStarted = resolvePromise;
+    });
+    let blockedSignal: AbortSignal | undefined;
+    const renderer: WatchRenderer = async (source, context) => {
+      if (source === "blocked") {
+        blockedSignal = context.signal;
+        markBlockedRenderStarted();
+        await blockedRender;
+      }
+      return { html: `<!doctype html><body>${source}</body>` };
+    };
+    const session = await startWatchPreview({
+      inputPath: fixture.filePath,
+      format: "markdown",
+      theme: "auto",
+      fontSizePx: 15,
+      debounceMs: 10,
+      renderer,
+    });
+    const url = session.url;
+
+    try {
+      await writeFile(fixture.filePath, "blocked", "utf8");
+      await blockedRenderStarted;
+      await within(session.close(), 750, "preview shutdown while rendering");
+      assert.equal(blockedSignal?.aborted, true);
+      await assert.rejects(fetch(url));
+    } finally {
+      releaseBlockedRender();
+      await session.waitForIdle().catch(() => undefined);
       await session.close();
       await rm(fixture.directory, { recursive: true, force: true });
     }

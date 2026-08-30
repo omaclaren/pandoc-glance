@@ -1,6 +1,6 @@
 {
   "name": "pandoc-glance",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Render Markdown and LaTeX files in the browser with live reload",
   "type": "module",
   "exports": {

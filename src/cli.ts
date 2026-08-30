@@ -16,7 +16,7 @@ import {
 import type { PreviewTheme } from "./styles.js";
 import { startWatchPreview, type WatchPreviewSession } from "./watch-preview.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.2.1";
 export const DEFAULT_FONT_SIZE_PX = 15;
 export const MIN_FONT_SIZE_PX = 10;
 export const MAX_FONT_SIZE_PX = 24;
@@ -269,24 +269,6 @@ async function writeOneShotHtml(inputPath: string, html: string, options: CliOpt
   return outputPath;
 }
 
-async function waitForShutdown(session: WatchPreviewSession): Promise<void> {
-  await new Promise<void>((resolvePromise) => {
-    let shuttingDown = false;
-    const onInterrupt = (): void => shutdown("SIGINT");
-    const onTerminate = (): void => shutdown("SIGTERM");
-    const shutdown = (signal: NodeJS.Signals): void => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      process.off("SIGINT", onInterrupt);
-      process.off("SIGTERM", onTerminate);
-      process.stderr.write(`\nReceived ${signal}; shutting down preview server…\n`);
-      void session.close().then(resolvePromise, resolvePromise);
-    };
-    process.once("SIGINT", onInterrupt);
-    process.once("SIGTERM", onTerminate);
-  });
-}
-
 async function runOneShot(options: CliOptions, inputPath: string): Promise<number> {
   const format = detectFormat(inputPath, options.format);
   const source = await readFile(inputPath, "utf8");
@@ -308,38 +290,68 @@ async function runOneShot(options: CliOptions, inputPath: string): Promise<numbe
 
 async function runWatch(options: CliOptions, inputPath: string): Promise<number> {
   const format = detectFormat(inputPath, options.format);
-  let recovered = false;
-  const session = await startWatchPreview({
-    inputPath,
-    format,
-    theme: options.theme,
-    fontSizePx: options.fontSizePx,
-    port: options.port,
-    onLog: (message, level) => {
-      const stream = level === "info" ? process.stdout : process.stderr;
-      stream.write(`${message}\n`);
-    },
-    onStatus: (status) => {
-      if (status.status === "success" && status.revision > 1) recovered = true;
-    },
+  const shutdownController = new AbortController();
+  let requestShutdown = (): void => undefined;
+  const shutdownRequested = new Promise<void>((resolvePromise) => {
+    requestShutdown = resolvePromise;
   });
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onTerminate);
+    process.stderr.write(`\nReceived ${signal}; shutting down preview server…\n`);
+    shutdownController.abort();
+    requestShutdown();
+  };
+  const onInterrupt = (): void => shutdown("SIGINT");
+  const onTerminate = (): void => shutdown("SIGTERM");
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onTerminate);
 
-  process.stdout.write(`Watching: ${inputPath}\n`);
-  process.stdout.write(`Preview URL: ${session.url}\n`);
-  process.stdout.write("Updates are save-based; unsaved editor buffers are not visible.\n");
-  if (session.initialError) {
-    process.stderr.write(`Initial render failed; watch mode remains active for recovery: ${session.initialError}\n`);
-  }
-
+  let recovered = false;
+  let session: WatchPreviewSession | undefined;
   try {
-    if (options.open) await openInDefaultBrowser(session.url);
-  } catch (error) {
-    await session.close();
-    throw error;
-  }
+    await assertPandocAvailable(shutdownController.signal);
+    if (shutdownController.signal.aborted) return 0;
+    session = await startWatchPreview({
+      inputPath,
+      format,
+      theme: options.theme,
+      fontSizePx: options.fontSizePx,
+      port: options.port,
+      signal: shutdownController.signal,
+      onLog: (message, level) => {
+        const stream = level === "info" ? process.stdout : process.stderr;
+        stream.write(`${message}\n`);
+      },
+      onStatus: (status) => {
+        if (status.status === "success" && status.revision > 1) recovered = true;
+      },
+    });
 
-  await waitForShutdown(session);
-  return session.initialError && !recovered ? 1 : 0;
+    if (!shutdownController.signal.aborted) {
+      process.stdout.write(`Watching: ${inputPath}\n`);
+      process.stdout.write(`Preview URL: ${session.url}\n`);
+      process.stdout.write("Updates are save-based; unsaved editor buffers are not visible.\n");
+      if (session.initialError) {
+        process.stderr.write(`Initial render failed; watch mode remains active for recovery: ${session.initialError}\n`);
+      }
+      if (options.open) await openInDefaultBrowser(session.url);
+    }
+
+    if (!shutdownController.signal.aborted) await shutdownRequested;
+    await session.close();
+    return session.initialError && !recovered ? 1 : 0;
+  } catch (error) {
+    await session?.close().catch(() => undefined);
+    if (shutdownController.signal.aborted) return 0;
+    throw error;
+  } finally {
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onTerminate);
+  }
 }
 
 export async function runCli(argv: string[]): Promise<number> {
@@ -369,8 +381,9 @@ export async function runCli(argv: string[]): Promise<number> {
   const inputPath = resolve(options.inputPath!);
   try {
     await validateInputFile(inputPath);
+    if (options.watch) return await runWatch(options, inputPath);
     await assertPandocAvailable();
-    return options.watch ? await runWatch(options, inputPath) : await runOneShot(options, inputPath);
+    return await runOneShot(options, inputPath);
   } catch (error) {
     process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

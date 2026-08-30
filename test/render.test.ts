@@ -32,6 +32,21 @@ function requirePandoc(context: { skip: (message?: string) => void }): boolean {
   return false;
 }
 
+async function within<T>(promise: Promise<T>, timeoutMs: number, description: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolvePromise, rejectPromise) => {
+        timeout = setTimeout(() => rejectPromise(new Error(`Timed out waiting for ${description}.`)), timeoutMs);
+        timeout.unref();
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 describe("format detection", () => {
   it("detects Markdown and standalone LaTeX extensions", () => {
     assert.equal(detectFormat("notes.md", "auto"), "markdown");
@@ -56,6 +71,91 @@ describe("format detection", () => {
       else process.env.PANDOC_PATH = previous;
     }
   });
+
+  it("honors a pre-aborted render signal before starting Pandoc", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+      renderDocument({
+        source: "# Cancelled",
+        sourcePath: join(fixtureDirectory, "cancelled.md"),
+        resourceRoot: fixtureDirectory,
+        format: "markdown",
+        theme: "light",
+        fontSizePx: 15,
+        signal: controller.signal,
+      }),
+      /rendering was cancelled/i,
+    );
+  });
+
+  it("kills an in-flight Pandoc process when rendering is aborted", async (context) => {
+    if (process.platform === "win32") {
+      context.skip("The executable Pandoc stub in this test uses a POSIX shebang.");
+      return;
+    }
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), "pandoc-glance-abort-"));
+    const markerPath = join(temporaryDirectory, "child.json");
+    const stubPath = join(temporaryDirectory, "pandoc-stub");
+    await writeFile(stubPath, [
+      "#!/usr/bin/env node",
+      "const fs = require('node:fs');",
+      "fs.writeFileSync(process.env.PANDOC_GLANCE_ABORT_MARKER, JSON.stringify({ pid: process.pid }));",
+      "process.stdin.resume();",
+      "setTimeout(() => process.stdout.write('<html><body>late</body></html>'), 30000);",
+    ].join("\n"), { encoding: "utf8", mode: 0o755 });
+
+    const previousPandocPath = process.env.PANDOC_PATH;
+    const previousMarker = process.env.PANDOC_GLANCE_ABORT_MARKER;
+    const controller = new AbortController();
+    let childPid: number | undefined;
+    let rendering: ReturnType<typeof renderDocument> | undefined;
+    try {
+      process.env.PANDOC_PATH = stubPath;
+      process.env.PANDOC_GLANCE_ABORT_MARKER = markerPath;
+      rendering = renderDocument({
+        source: "# Blocked",
+        sourcePath: join(temporaryDirectory, "blocked.md"),
+        resourceRoot: temporaryDirectory,
+        format: "markdown",
+        theme: "light",
+        fontSizePx: 15,
+        signal: controller.signal,
+      });
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          const marker = JSON.parse(await readFile(markerPath, "utf8")) as { pid: number };
+          childPid = marker.pid;
+          break;
+        } catch {
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+        }
+      }
+      assert.ok(childPid, "The Pandoc stub should have started.");
+      controller.abort();
+      await within(assert.rejects(rendering, /rendering was cancelled/i), 1000, "Pandoc cancellation");
+
+      let childStopped = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          process.kill(childPid, 0);
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+        } catch {
+          childStopped = true;
+          break;
+        }
+      }
+      assert.equal(childStopped, true, "The aborted Pandoc child should not survive.");
+    } finally {
+      controller.abort();
+      await rendering?.catch(() => undefined);
+      if (previousPandocPath === undefined) delete process.env.PANDOC_PATH;
+      else process.env.PANDOC_PATH = previousPandocPath;
+      if (previousMarker === undefined) delete process.env.PANDOC_GLANCE_ABORT_MARKER;
+      else process.env.PANDOC_GLANCE_ABORT_MARKER = previousMarker;
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Pandoc rendering", () => {
@@ -74,7 +174,7 @@ describe("Pandoc rendering", () => {
 
     assert.match(rendered.fragmentHtml, /<h1 id="pandoc-glance-sample">/);
     assert.match(rendered.fragmentHtml, /class="sourceCode typescript"/);
-    assert.match(rendered.fragmentHtml, /<span class="kw">interface<\/span>/);
+    assert.match(rendered.fragmentHtml, /<span class="dt">number<\/span>/);
     assert.ok((rendered.fragmentHtml.match(/<math\b/g) ?? []).length >= 4, rendered.fragmentHtml);
     assert.match(rendered.fragmentHtml, /<pre class="mermaid">/);
     assert.match(rendered.fragmentHtml, /lucide:file-code-2/);
@@ -283,7 +383,7 @@ describe("Pandoc rendering", () => {
     if (!requirePandoc(context)) return;
     const sourcePath = join(fixtureDirectory, "sample.md");
     const rendered = await renderDocument({
-      source: "# Resource\n\n![fixture](sample.svg)",
+      source: "# Resource\n\n![fixture](sample.svg?variant=dark&mode=compact#layer-two)",
       sourcePath,
       resourceRoot: fixtureDirectory,
       format: "markdown",
@@ -301,7 +401,10 @@ describe("Pandoc rendering", () => {
       },
     });
 
-    assert.match(rendered.fragmentHtml, /src="\/token\/resource\?path=sample\.svg&amp;v=7"/);
+    assert.match(
+      rendered.fragmentHtml,
+      /src="\/token\/resource\?path=sample\.svg&amp;v=7&amp;variant=dark&amp;mode=compact#layer-two"/,
+    );
     assert.match(rendered.html, /new EventSource\(CONFIG\.live\.eventsPath\)/);
     assert.match(rendered.html, /"revision":7/);
   });
@@ -317,7 +420,7 @@ describe("Pandoc rendering", () => {
 
     try {
       const rendered = await renderDocument({
-        source: "See @fig-parent.\n\n![Parent PDF](../figure.pdf){#fig-parent fig-align=\"center\"}",
+        source: "See @fig-parent.\n\n![Parent PDF](../figure.pdf?download=0#page=2){#fig-parent fig-align=\"center\"}",
         sourcePath,
         resourceRoot: documentDirectory,
         format: "markdown",
@@ -331,7 +434,7 @@ describe("Pandoc rendering", () => {
       });
       assert.equal(rendered.assets.size, 1);
       assert.match(rendered.fragmentHtml, /<a href="#fig-parent">Figure 1<\/a>/);
-      assert.match(rendered.fragmentHtml, /<div class="preview-pdf-figure preview-pdf-pending" data-preview-pdf-src="\/token\/asset\/[A-Za-z0-9_-]{24}\?v=4" id="fig-parent"/);
+      assert.match(rendered.fragmentHtml, /<div class="preview-pdf-figure preview-pdf-pending" data-preview-pdf-src="\/token\/asset\/[A-Za-z0-9_-]{24}\?v=4&amp;download=0#page=2" id="fig-parent"/);
       assert.match(rendered.fragmentHtml, /<figcaption[^>]*>Figure 1: Parent PDF<\/figcaption>/);
       assert.match(rendered.fragmentHtml, /class="preview-pdf-open"[^>]*>Open PDF<\/a>/);
       assert.doesNotMatch(rendered.fragmentHtml, /<embed\b/);
@@ -342,7 +445,7 @@ describe("Pandoc rendering", () => {
       assert.match(rendered.html, /\.preview-pdf-loading/);
 
       const oneShot = await renderDocument({
-        source: "![Parent PDF](../figure.pdf)",
+        source: "![Parent PDF](../figure.pdf?download=0#page=2)",
         sourcePath,
         resourceRoot: documentDirectory,
         format: "markdown",
@@ -350,7 +453,7 @@ describe("Pandoc rendering", () => {
         fontSizePx: 15,
       });
       assert.match(oneShot.fragmentHtml, /data-preview-pdf-src="data:application\/pdf;base64,JVBER/);
-      assert.match(oneShot.fragmentHtml, /class="preview-pdf-open" href="\.\.\/figure\.pdf"/);
+      assert.match(oneShot.fragmentHtml, /class="preview-pdf-open" href="\.\.\/figure\.pdf\?download=0#page=2"/);
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }
@@ -397,7 +500,7 @@ describe("Pandoc rendering", () => {
 
     try {
       const rendered = await renderDocument({
-        source: `![outside](<${outsideImage}>)`,
+        source: `![outside](<${outsideImage}?variant=dark#layer-two>)`,
         sourcePath,
         resourceRoot: documentDirectory,
         format: "markdown",
@@ -410,7 +513,7 @@ describe("Pandoc rendering", () => {
         },
       });
       assert.equal(rendered.assets.size, 1);
-      assert.match(rendered.fragmentHtml, /src="\/token\/asset\/[A-Za-z0-9_-]{24}\?v=3"/);
+      assert.match(rendered.fragmentHtml, /src="\/token\/asset\/[A-Za-z0-9_-]{24}\?v=3&amp;variant=dark#layer-two"/);
       assert.equal([...rendered.assets.values()][0], await realpath(outsideImage));
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
