@@ -2,7 +2,7 @@
 import { parse, postprocess, preprocess } from "micromark";
 import { isMap, parseDocument } from "yaml";
 
-interface SourceRange {
+export interface SourceRange {
   start: number;
   end: number;
 }
@@ -235,6 +235,22 @@ function collectMarkdownHtmlCommentRanges(source: string): SourceRange[] {
     index = end;
   }
   return commentRanges;
+}
+
+/** Literal contexts for narrow sup/sub compatibility, not a raw-HTML allowlist.
+ * Adapted from pi-markdown-preview/shared/markdown-html-comments.js (MIT).
+ */
+export function collectMarkdownLiteralRanges(source: string): SourceRange[] {
+  const frontMatter = splitValidYamlFrontMatter(source)?.frontMatter;
+  return mergeRanges([
+    ...collectProtectedMarkdownRanges(source),
+    ...collectProtectedMarkdownRanges(maskHtmlTags(source)),
+    // Never rewrite text inside another tag's attributes. Only bare sup/sub
+    // delimiters may be interpreted by the compatibility pass.
+    ...collectHtmlTags(source).filter(({ start, end }) => !/^<\/?(?:sup|sub)>$/i.test(source.slice(start, end))),
+    ...collectMarkdownHtmlCommentRanges(source),
+    ...(frontMatter ? [{ start: 0, end: frontMatter.length }] : []),
+  ]);
 }
 
 function blankCommentTextPreservingLineEndings(comment: string): string {

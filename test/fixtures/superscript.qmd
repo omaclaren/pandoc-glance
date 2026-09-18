@@ -1,0 +1,38 @@
+---
+title: Superscript and subscript
+---
+
+Alan Li<sup>1</sup>, Oliver Maclaren<sup>1,2</sup>
+
+<sup>1</sup> Department of Engineering Science
+
+<sup>2</sup> Research group
+
+## Inline notation
+
+Water is H<sub>2</sub>O. An example power is x<sup>2</sup>.
+
+Native Pandoc notation still works: Name^1,2^ and H~2~O.
+
+Multiple markers with a space: Name<sup>1, 2</sup>.
+
+Entity markers: Name<sup>&#8224; &Dagger;</sup>.
+
+[an:Check the affiliation for Alan Li<sup>1</sup>.]
+
+## Literal examples
+
+Inline code: `Alan Li<sup>1</sup>`.
+
+Escaped: Alan Li\<sup>1</sup>.
+
+```html
+Alan Li<sup>1</sup>
+H<sub>2</sub>O
+```
+
+## Unsupported HTML stays literal
+
+<sup class="custom">1</sup>
+
+<sup><em>nested HTML</em></sup>

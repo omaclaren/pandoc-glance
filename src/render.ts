@@ -10,6 +10,7 @@ import {
 } from "./local-resource.js";
 import { highlightMarkdownAnnotations } from "./annotations.js";
 import { stripMarkdownHtmlCommentsPreservingYamlFrontMatter } from "./markdown-comments.js";
+import { normalizeSubSupTags } from "./markdown-sub-sup.js";
 import { previewResourceContentType } from "./resource-types.js";
 import {
   createPreviewScriptNonce,
@@ -382,7 +383,7 @@ export function normalizeMarkdownFencedBlocks(markdown: string): string {
 export function prepareMarkdownForPandoc(markdown: string): string {
   const withoutComments = stripMarkdownHtmlComments(markdown);
   const normalized = normalizeMarkdownFencedBlocks(normalizeObsidianImages(normalizeMathDelimiters(withoutComments)));
-  return highlightMarkdownAnnotations(normalized);
+  return highlightMarkdownAnnotations(normalizeSubSupTags(normalized));
 }
 
 export async function renderPandocFragment(
@@ -393,7 +394,7 @@ export async function renderPandocFragment(
 ): Promise<{ html: string; warnings: string[] }> {
   const inputFormat = format === "latex"
     ? "latex"
-    : "markdown+lists_without_preceding_blankline-blank_before_blockquote-blank_before_header+tex_math_dollars+autolink_bare_uris-raw_html-raw_attribute";
+    : "markdown+lists_without_preceding_blankline-blank_before_blockquote-blank_before_header+tex_math_dollars+autolink_bare_uris+superscript+subscript-raw_html-raw_attribute";
   const pandocInput = format === "latex" ? source : prepareMarkdownForPandoc(source);
   const args = [
     "-f",

@@ -106,6 +106,22 @@ $$
 
 Pandoc emits native MathML when possible. The browser loads MathJax only for equations that Pandoc leaves as TeX.
 
+### Superscripts and subscripts
+
+Bare HTML-style superscripts and subscripts work in Markdown/QMD previews, including affiliation markers:
+
+```markdown
+Alan Li<sup>1</sup>, Oliver Maclaren<sup>1,2</sup>
+
+<sup>1</sup> Department of Engineering Science
+
+H<sub>2</sub>O
+```
+
+This narrowly scoped compatibility matches pi-markdown-preview: plain, single-line text inside bare `<sup>…</sup>` or `<sub>…</sub>` is translated to Pandoc's native notation. It works in both one-shot and watch mode without enabling raw HTML. Attributes and nested HTML are not supported; code examples, escaped tags, YAML front matter, and math contents are preserved. Native Pandoc syntax (`Name^1,2^`, `H~2~O`) still works. Standalone LaTeX is unchanged.
+
+From a checkout, try `node dist/cli.js --watch test/fixtures/superscript.qmd` after building.
+
 ### Mermaid
 
 ````markdown
@@ -272,7 +288,7 @@ One-shot pages carry a nonce-based Content Security Policy in the generated HTML
 - Uses a random 192-bit token in every preview route.
 - Uses a fresh script nonce for every page response with `strict-dynamic`; inline/eval JavaScript and `javascript:` links cannot execute.
 - Sets `no-store`, `nosniff`, no-referrer, same-origin, and content-security headers.
-- Disables Pandoc raw HTML and raw attributed blocks; authored HTML is rendered inert.
+- Disables Pandoc raw HTML and raw attributed blocks; authored HTML is rendered inert except for the narrow bare-text sup/sub conversion described above, which emits native Pandoc notation rather than passing HTML through.
 - Rejects arbitrary resource-route traversal, including encoded `..`, and rejects symlinks that escape the source directory.
 - Rejects raw, encoded, and mixed-separator UNC paths and Windows device paths before accessing the file system.
 - Serves only browser-preview media types: common images, audio/video, and PDF. Source, script, HTML, and unknown file types receive `415 Unsupported Media Type`.

@@ -4,6 +4,7 @@
 // Pandoc remains responsible for rendering/escaping all note contents.
 import { parse, postprocess, preprocess } from "micromark";
 import { splitValidYamlFrontMatter } from "./markdown-comments.js";
+import { markdownMathEnd, pandocAttributeEnd } from "./markdown-inline.js";
 
 interface SourceRange {
   start: number;
@@ -39,39 +40,6 @@ function mergeRanges(ranges: SourceRange[]): SourceRange[] {
   return merged;
 }
 
-/** Skip math as a unit, including unmatched square brackets in TeX. */
-function mathEnd(source: string, start: number, limit: number): number | undefined {
-  const opening = source.startsWith("$$", start) ? "$$"
-    : source.startsWith("\\(", start) ? "\\("
-      : source.startsWith("\\[", start) ? "\\["
-        : source[start] === "$" && /\S/.test(source[start + 1] ?? "") ? "$" : undefined;
-  if (!opening) return undefined;
-  const closing = opening === "\\(" ? "\\)" : opening === "\\[" ? "\\]" : opening;
-  for (let index = start + opening.length; index < limit; index += 1) {
-    if (source.startsWith(closing, index)) {
-      if (opening === "$" && (/\s/.test(source[index - 1]!) || /\d/.test(source[index + 1] ?? ""))) continue;
-      return index + closing.length;
-    }
-    if (source[index] === "\\") index += 1;
-  }
-  return undefined;
-}
-
-/** Micromark does not recognise Pandoc's attribute syntax. Leave it alone. */
-function attributeEnd(source: string, start: number, limit: number): number | undefined {
-  if (source[start] !== "{" || !/^\{[ \t]*(?:[.#]|[\w:-]+[ \t]*=)/.test(source.slice(start))) return undefined;
-  let quote: string | undefined;
-  for (let index = start + 1; index < limit; index += 1) {
-    const character = source[index];
-    if (character === "\\") index += 1;
-    else if (quote) {
-      if (character === quote) quote = undefined;
-    } else if (character === '"' || character === "'") quote = character;
-    else if (character === "}") return index + 1;
-  }
-  return undefined;
-}
-
 function bareUrlEnd(source: string, start: number): number | undefined {
   if (!/[hf]/i.test(source[start] ?? "")) return undefined;
   const match = source.slice(start).match(/^(?:https?|ftp):\/\/[^\s<>]+/i);
@@ -82,7 +50,7 @@ function readMarkerEnd(source: string, start: number, limit: number, protectedRa
   let depth = 0;
   for (let index = start + 4; index < limit; index += 1) {
     const protectedRange = containingRange(protectedRanges, index);
-    const end = protectedRange?.end ?? mathEnd(source, index, limit) ?? attributeEnd(source, index, limit);
+    const end = protectedRange?.end ?? markdownMathEnd(source, index, limit) ?? pandocAttributeEnd(source, index, limit);
     if (end !== undefined) {
       index = end - 1;
       continue;
@@ -132,8 +100,8 @@ export function highlightMarkdownAnnotations(markdown: string): string {
   for (const range of prose) {
     for (let index = range.start; index < range.end; index += 1) {
       const protectedRange = containingRange(protectedInlines, index);
-      const end = protectedRange?.end ?? mathEnd(source, index, range.end)
-        ?? attributeEnd(source, index, range.end) ?? bareUrlEnd(source, index);
+      const end = protectedRange?.end ?? markdownMathEnd(source, index, range.end)
+        ?? pandocAttributeEnd(source, index, range.end) ?? bareUrlEnd(source, index);
       if (end !== undefined) {
         index = end - 1;
         continue;

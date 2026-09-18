@@ -242,6 +242,73 @@ describe("Pandoc rendering", () => {
     assert.doesNotMatch(rendered.fragmentHtml, /private drafting note|&lt;!|--&gt;/);
   });
 
+  it("renders bare HTML superscripts/subscripts in one-shot and watch previews without enabling HTML", async (context) => {
+    if (!requirePandoc(context)) return;
+    const sourcePath = join(fixtureDirectory, "superscript.qmd");
+    const source = await readFile(sourcePath, "utf8");
+    for (const watch of [false, true]) {
+      const rendered = await renderDocument({
+        source, sourcePath, resourceRoot: fixtureDirectory,
+        format: "markdown", theme: watch ? "dark" : "light", fontSizePx: 15,
+        ...(watch ? {
+          liveReload: { eventsPath: "/token/events", revision: 2, storageKey: "superscript" },
+          serverResources: { resourcePath: "/token/resource", assetPath: "/token/asset", revision: 2 },
+        } : {}),
+      });
+      assert.match(rendered.fragmentHtml, /Alan Li<sup>1<\/sup>, Oliver Maclaren<sup>1,2<\/sup>/);
+      assert.match(rendered.fragmentHtml, /<sup>1<\/sup> Department of Engineering Science/);
+      assert.match(rendered.fragmentHtml, /H<sub>2<\/sub>O/);
+      assert.match(rendered.fragmentHtml, /Name<sup>1,2<\/sup>/);
+      assert.match(rendered.fragmentHtml, /Name<sup>1,\s2<\/sup>/);
+      assert.match(rendered.fragmentHtml, /Name<sup>†\s‡<\/sup>/);
+      assert.match(rendered.fragmentHtml, /class="annotation-marker"[^>]*>Check the affiliation for Alan Li<sup>1<\/sup>/);
+      assert.match(rendered.fragmentHtml, /<code>Alan Li&lt;sup&gt;1&lt;\/sup&gt;<\/code>/);
+      assert.match(rendered.fragmentHtml, /Escaped: Alan Li&lt;sup&gt;1&lt;\/sup&gt;/);
+      assert.doesNotMatch(rendered.fragmentHtml, /<sup class="custom"|<em>nested HTML<\/em>/);
+      assert.doesNotMatch(rendered.html, /script-src[^;\"]*unsafe-inline|unsafe-eval/);
+      assert.deepEqual(rendered.pandocWarnings, []);
+    }
+    assert.equal(await readFile(sourcePath, "utf8"), source);
+  });
+
+  it("treats superscript contents as text, not annotations, citations, links, or Markdown formatting", async (context) => {
+    if (!requirePandoc(context)) return;
+    const rendered = await renderDocument({
+      source: '<sup>* _ ^ ~ $ [1] &amp; ²</sup>\n\n<sup>[an:literal] @fig-test https://example.com ---</sup>',
+      sourcePath: join(fixtureDirectory, "superscript-text.md"),
+      resourceRoot: fixtureDirectory, format: "markdown", theme: "light", fontSizePx: 15,
+    });
+    const html = rendered.fragmentHtml.replace(/\u00a0/g, " ");
+    assert.match(html, /<sup>\* _ \^ ~ \$ \[1\] &amp; ²<\/sup>/);
+    assert.match(html, /<sup>\[an:literal\] @fig-test https:\/\/example.com ---<\/sup>/);
+    assert.doesNotMatch(html, /class="annotation-marker"|class="citation"|<a\b|<em\b|<strong\b/);
+    assert.deepEqual(rendered.pandocWarnings, []);
+  });
+
+  it("keeps attributed/script HTML inert alongside supported superscripts and preserves YAML", async (context) => {
+    if (!requirePandoc(context)) return;
+    const rendered = await renderDocument({
+      source: [
+        '---', 'title: "<sup>Metadata literal</sup>"', '---', '',
+        'Alan Li<sup>1</sup>', '',
+        '<sup onclick="globalThis.bad = true">unsafe</sup>', '',
+        '<script>globalThis.bad = true</script>', '',
+        '<sup>&lt;img src=x onerror=alert(1)&gt;</sup>', '',
+        '```{=html}', '<sup>raw attributed example</sup>', '```',
+      ].join("\n"),
+      sourcePath: join(fixtureDirectory, "superscript-security.md"),
+      resourceRoot: fixtureDirectory, format: "markdown", theme: "auto", fontSizePx: 15,
+    });
+    assert.match(rendered.fragmentHtml, /<h1 class="title">&lt;sup&gt;Metadata literal&lt;\/sup&gt;<\/h1>/);
+    assert.match(rendered.fragmentHtml, /Alan Li<sup>1<\/sup>/);
+    assert.match(rendered.fragmentHtml, /&lt;script&gt;/);
+    assert.match(rendered.fragmentHtml, /&lt;img/);
+    assert.doesNotMatch(rendered.fragmentHtml, /<sup\s|<script\b|<img\b/);
+    assert.match(rendered.fragmentHtml, /<code[^>]*>&lt;sup&gt;raw attributed example&lt;\/sup&gt;<\/code>/);
+    assert.equal(rendered.assets.size, 0);
+    assert.doesNotMatch(rendered.html, /script-src[^;\"]*unsafe-inline|unsafe-eval/);
+  });
+
   it("renders annotation spans with inline Markdown and math in one-shot and watch pages", async (context) => {
     if (!requirePandoc(context)) return;
     const sourcePath = join(fixtureDirectory, "annotations.qmd");

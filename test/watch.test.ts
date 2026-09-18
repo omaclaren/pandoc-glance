@@ -124,25 +124,27 @@ describe("watch preview", () => {
     }
   });
 
-  it("updates display-only annotations after saves with the real Pandoc renderer", async (context) => {
+  it("updates annotations and superscripts after saves with the real Pandoc renderer", async (context) => {
     try {
       await assertPandocAvailable();
     } catch {
       context.skip("Pandoc is not installed; skipping Pandoc integration coverage.");
       return;
     }
-    const fixture = await temporarySource("Before [an:first] and `[an:literal]`.");
+    const fixture = await temporarySource("Alan Li<sup>1</sup>. Before [an:first] and `[an:literal]`.");
     const session = await startWatchPreview({
       inputPath: fixture.filePath, format: "markdown", theme: "auto", fontSizePx: 15, debounceMs: 25,
     });
     try {
       const initial = await (await fetch(session.url)).text();
       assert.match(initial, /class="annotation-marker" title="\[an: first\]">first<\/span>/);
-      await writeFile(fixture.filePath, "After [an:**second**] and `[an:literal]`.", "utf8");
-      await waitFor(() => session.state.status === "success" && session.state.successfulRevision >= 2, "annotation update");
+      assert.match(initial, /Alan Li<sup>1<\/sup>/);
+      await writeFile(fixture.filePath, "Alan Li<sup>2</sup>. After [an:**second**] and `[an:literal]`.", "utf8");
+      await waitFor(() => session.state.status === "success" && session.state.successfulRevision >= 2, "annotation/superscript update");
       const updated = await (await fetch(session.url)).text();
       assert.match(updated, /class="annotation-marker"[^>]*><strong>second<\/strong><\/span>/);
       assert.match(updated, /<code>\[an:literal\]<\/code>/);
+      assert.match(updated, /Alan Li<sup>2<\/sup>/);
       assert.doesNotMatch(updated, /title="\[an: first\]"/);
     } finally {
       await session.close();
