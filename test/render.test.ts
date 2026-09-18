@@ -242,6 +242,97 @@ describe("Pandoc rendering", () => {
     assert.doesNotMatch(rendered.fragmentHtml, /private drafting note|&lt;!|--&gt;/);
   });
 
+  it("renders annotation spans with inline Markdown and math in one-shot and watch pages", async (context) => {
+    if (!requirePandoc(context)) return;
+    const sourcePath = join(fixtureDirectory, "annotations.qmd");
+    const source = await readFile(sourcePath, "utf8");
+    for (const watch of [false, true]) {
+      const rendered = await renderDocument({
+        source, sourcePath, resourceRoot: fixtureDirectory,
+        format: "markdown", theme: watch ? "dark" : "light", fontSizePx: 15,
+        ...(watch ? {
+          liveReload: { eventsPath: "/token/events", revision: 3, storageKey: "annotations" },
+          serverResources: { resourcePath: "/token/resource", assetPath: "/token/asset", revision: 3 },
+        } : {}),
+      });
+      assert.equal((rendered.fragmentHtml.match(/class="annotation-marker"/g) ?? []).length, 9);
+      assert.match(rendered.fragmentHtml, /title="\[an: here\]">here<\/span>/);
+      assert.match(rendered.fragmentHtml, /<strong>emphasising the assumption<\/strong>/);
+      assert.match(rendered.fragmentHtml, /<code>npm test<\/code>, <math\b/);
+      assert.match(rendered.fragmentHtml, /<a href="https:\/\/example.com\/docs">the documentation<\/a>/);
+      assert.match(rendered.fragmentHtml, /<code>\[an:literal code\]<\/code>/);
+      assert.match(rendered.fragmentHtml, /Escaped: \[an:literal escaped example\]/);
+      assert.match(rendered.fragmentHtml, /<pre><code>\[an:literal indented example\]<\/code><\/pre>/);
+      assert.match(rendered.fragmentHtml, /unfinished marker stays visible: \[an:still writing/);
+      assert.match(rendered.fragmentHtml, /<a href="#fig-sample">Figure 1<\/a>/);
+      assert.doesNotMatch(rendered.fragmentHtml, /nor should this|drafting comment|\]\{\.annotation-marker/);
+      assert.match(rendered.html, /box-decoration-break: clone/);
+      assert.doesNotMatch(rendered.html, /script-src[^;\"]*unsafe-inline|unsafe-eval/);
+      assert.deepEqual(rendered.pandocWarnings, []);
+    }
+    assert.equal(await readFile(sourcePath, "utf8"), source, "Rendering must not modify the source file.");
+  });
+
+  it("does not let generated annotation titles break pipe tables", async (context) => {
+    if (!requirePandoc(context)) return;
+    const rendered = await renderDocument({
+      source: [
+        '| Note | Next |', '|------|------|',
+        String.raw`| [an:a \| b] | first |`,
+        '| [an:`a|b`] | second |',
+      ].join("\n"),
+      sourcePath: join(fixtureDirectory, "annotation-table.md"),
+      resourceRoot: fixtureDirectory, format: "markdown", theme: "light", fontSizePx: 15,
+    });
+    assert.equal((rendered.fragmentHtml.match(/<td>/g) ?? []).length, 4);
+    assert.equal((rendered.fragmentHtml.match(/class="annotation-marker"/g) ?? []).length, 2);
+    assert.match(rendered.fragmentHtml, />a \| b<\/span>/);
+    assert.match(rendered.fragmentHtml, /<code>a\|b<\/code><\/span>/);
+    assert.match(rendered.fragmentHtml, /<td>first<\/td>/);
+    assert.match(rendered.fragmentHtml, /<td>second<\/td>/);
+  });
+
+  it("keeps hostile annotation markup inert and escapes generated attributes", async (context) => {
+    if (!requirePandoc(context)) return;
+    const rendered = await renderDocument({
+      source: [
+        '[an:<script>alert(1)</script> <img src=x onerror="alert(2)">]',
+        '[an:`<img src=x onerror="alert(3)">`{=html}]',
+        String.raw`[an:quote \" onmouseover=\"alert(4) and & <tag>]`,
+        '[an:[bad link](javascript:alert%285%29)]',
+      ].join("\n\n"),
+      sourcePath: join(fixtureDirectory, "annotations-security.md"),
+      resourceRoot: fixtureDirectory, format: "markdown", theme: "auto", fontSizePx: 15,
+    });
+    assert.equal((rendered.fragmentHtml.match(/class="annotation-marker"/g) ?? []).length, 4);
+    assert.doesNotMatch(rendered.fragmentHtml, /<script\b|<img\b|<tag\b/);
+    assert.match(rendered.fragmentHtml, /&lt;script&gt;/);
+    assert.match(rendered.fragmentHtml, /&lt;img/);
+    assert.match(rendered.fragmentHtml, /<code>/);
+    assert.doesNotMatch(rendered.fragmentHtml, /<span[^>]*\sonmouseover="/);
+    assert.equal(rendered.assets.size, 0);
+    assert.doesNotMatch(rendered.html, /script-src[^;\"]*unsafe-inline|unsafe-eval/);
+  });
+
+  it("preserves annotation examples in metadata and LaTeX and uses meaningful heading IDs", async (context) => {
+    if (!requirePandoc(context)) return;
+    const markdown = await renderDocument({
+      source: '---\ntitle: "[an:Metadata example]"\n---\n\n# Heading [an:check]\n\n[an:a [nested] bracket]\n',
+      sourcePath: join(fixtureDirectory, "annotation-heading.md"),
+      resourceRoot: fixtureDirectory, format: "markdown", theme: "light", fontSizePx: 15,
+    });
+    assert.match(markdown.fragmentHtml, /<h1 class="title">\[an:Metadata example\]<\/h1>/);
+    assert.match(markdown.fragmentHtml, /<h1 id="heading-check">Heading <span class="annotation-marker"/);
+    assert.match(markdown.fragmentHtml, />a \[nested\] bracket<\/span>/);
+    const latex = await renderDocument({
+      source: String.raw`\documentclass{article}\begin{document}[an:LaTeX unchanged]\end{document}`,
+      sourcePath: join(fixtureDirectory, "annotation.tex"),
+      resourceRoot: fixtureDirectory, format: "latex", theme: "light", fontSizePx: 15,
+    });
+    assert.doesNotMatch(latex.fragmentHtml, /class="annotation-marker"/);
+    assert.match(latex.fragmentHtml, /\[an:LaTeX unchanged\]/);
+  });
+
   it("resolves exact Quarto and pandoc-crossref figure references", async (context) => {
     if (!requirePandoc(context)) return;
     const sourcePath = join(fixtureDirectory, "crossrefs.qmd");

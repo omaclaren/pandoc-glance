@@ -170,6 +170,33 @@ This is deliberately a lightweight, document-local subset. It resolves exact sin
 
 HTML comments outside Markdown code contexts are removed before rendering, so private drafting notes do not become visible when raw HTML is disabled. Valid YAML mapping front matter and comment-like text in fenced, indented, or inline code are preserved.
 
+### Inline annotations
+
+Markdown/QMD previews highlight `[an: ...]` notes, using the same convention as pi-markdown-preview and Pi Studio:
+
+```markdown
+This argument needs checking. [an:here]
+
+Another point. [an:Check **this assumption**, `code`, and $x > 0$.]
+
+See the explanation. [an:Compare [the documentation](https://example.com/docs).]
+```
+
+The preview shows a highlighted note without the `[an: ]` wrapper; hovering shows the original note syntax. Markers are case-insensitive and do not require a space after `an:`. Notes support inline Markdown, including links and math, nested brackets, and soft line breaks within a paragraph. Long notes wrap with the surrounding text. One-shot and watch modes behave the same, with light/dark styling.
+
+This is a **nonstandard, display-only convention**, not a Markdown comment or a private note: annotations remain visible in the generated HTML. Source files are never changed. There is no browser annotation editor, comment storage, or AI integration.
+
+Use inline code (`` `[an:literal example]` ``) or escape the opening bracket (`\[an:literal example]`) to show the syntax literally. Fenced/indented code, YAML front matter, existing link/image labels and destinations, and math contents are left alone. Empty or unfinished markers stay visible; markers cannot span separate paragraphs. Standalone LaTeX is unchanged.
+
+![Dark preview with highlighted inline notes and literal code examples](https://raw.githubusercontent.com/omaclaren/pandoc-glance/main/docs/screenshots/annotations-dark.png)
+
+Try the self-contained example from a checkout:
+
+```bash
+npm run build
+node dist/cli.js --watch test/fixtures/annotations.qmd
+```
+
 ### Standalone LaTeX
 
 A `.tex` or `.latex` file is read as a complete LaTeX document:

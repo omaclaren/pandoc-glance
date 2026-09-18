@@ -238,6 +238,21 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.9em;
 }
+/* Display-only notes; inline fragments wrap rather than making a wide chip. */
+#preview-root .annotation-marker {
+  display: inline;
+  padding: 0.06em 0.28em;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--card));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warning) 15%, var(--card));
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-weight: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+#preview-root .annotation-marker mjx-container { margin: 0; }
 #preview-root pre code { color: var(--code-text); }
 #preview-root :not(pre) > code {
   padding: 0.12em 0.36em;

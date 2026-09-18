@@ -8,6 +8,7 @@ import {
   parseLocalResourceReference,
   type LocalResourceReference,
 } from "./local-resource.js";
+import { highlightMarkdownAnnotations } from "./annotations.js";
 import { stripMarkdownHtmlCommentsPreservingYamlFrontMatter } from "./markdown-comments.js";
 import { previewResourceContentType } from "./resource-types.js";
 import {
@@ -380,7 +381,8 @@ export function normalizeMarkdownFencedBlocks(markdown: string): string {
 
 export function prepareMarkdownForPandoc(markdown: string): string {
   const withoutComments = stripMarkdownHtmlComments(markdown);
-  return normalizeMarkdownFencedBlocks(normalizeObsidianImages(normalizeMathDelimiters(withoutComments)));
+  const normalized = normalizeMarkdownFencedBlocks(normalizeObsidianImages(normalizeMathDelimiters(withoutComments)));
+  return highlightMarkdownAnnotations(normalized);
 }
 
 export async function renderPandocFragment(

@@ -1,0 +1,45 @@
+---
+title: Annotation preview
+---
+
+# Display-only notes
+
+This claim needs checking. [an:here]
+
+Keep the explanation short. [an:Try **emphasising the assumption**, not just the conclusion.]
+
+A note can contain inline code, math, and a link: [an:Check `npm test`, $x \in [0,1)$, and [the documentation](https://example.com/docs).]
+
+[an:This is a longer note to check how highlighting wraps. It should stay within the document column on a narrow screen rather than behaving as one wide unbreakable box. You can edit this file and save it to check the same behaviour in watch mode.]
+
+> A quoted passage. [an:This note continues
+> on the next source line.]
+
+- First point [an:First note]
+- Second point [AN:Second note]
+
+| Item | Comment |
+|------|---------|
+| Estimate | [an:Check the units.] |
+
+## Literal examples
+
+Inline code: `[an:literal code]`.
+
+Escaped: \[an:literal escaped example].
+
+```markdown
+[an:literal fenced example]
+```
+
+    [an:literal indented example]
+
+An unfinished marker stays visible: [an:still writing
+
+## Figures still work
+
+See @fig-sample. [an:Compare the caption with the figure.]
+
+![Sample image](sample.svg){#fig-sample}
+
+<!-- This drafting comment should not appear. [an:nor should this] -->

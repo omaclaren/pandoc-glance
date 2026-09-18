@@ -261,7 +261,7 @@ export function stripMarkdownHtmlComments(markdown: string): string {
   return output + source.slice(cursor);
 }
 
-function splitValidYamlFrontMatter(source: string): { frontMatter: string; body: string } | undefined {
+export function splitValidYamlFrontMatter(source: string): { frontMatter: string; body: string } | undefined {
   const match = source.match(/^(\uFEFF?---[ \t]*\r?\n)([\s\S]*?)^((?:---|\.\.\.)[ \t]*(?:\r?\n|$))/m);
   if (!match || match.index !== 0) return undefined;
 

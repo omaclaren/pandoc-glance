@@ -16,7 +16,7 @@ import {
 import type { PreviewTheme } from "./styles.js";
 import { startWatchPreview, type WatchPreviewSession } from "./watch-preview.js";
 
-export const VERSION = "0.2.1";
+export const VERSION = "0.3.0";
 export const DEFAULT_FONT_SIZE_PX = 15;
 export const MIN_FONT_SIZE_PX = 10;
 export const MAX_FONT_SIZE_PX = 24;
