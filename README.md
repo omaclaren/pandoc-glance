@@ -182,7 +182,7 @@ Another point. [an:Check **this assumption**, `code`, and $x > 0$.]
 See the explanation. [an:Compare [the documentation](https://example.com/docs).]
 ```
 
-The preview shows a highlighted note without the `[an: ]` wrapper; hovering shows the original note syntax. Markers are case-insensitive and do not require a space after `an:`. Notes support inline Markdown, including links and math, nested brackets, and soft line breaks within a paragraph. Long notes wrap with the surrounding text. One-shot and watch modes behave the same, with light/dark styling.
+The preview shows a highlighted note without the `[an: ]` wrapper; hovering shows the original note syntax. Markers are case-insensitive and do not require a space after `an:`. Notes support inline Markdown, including links and math, nested brackets, and soft line breaks within a paragraph. Long notes wrap with the surrounding text. One-shot and watch modes behave the same. Notes use a soft theme-accent background and border with normal text colour, adapting to light/dark mode without changing the surrounding document theme.
 
 This is a **nonstandard, display-only convention**, not a Markdown comment or a private note: annotations remain visible in the generated HTML. Source files are never changed. There is no browser annotation editor, comment storage, or AI integration.
 

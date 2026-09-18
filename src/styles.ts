@@ -112,6 +112,8 @@ function cssVariables(palette: PreviewPalette, fontSizePx: number, colorScheme: 
   --text: ${palette.text};
   --muted: ${palette.muted};
   --accent: ${palette.accent};
+  --annotation-bg: color-mix(in srgb, var(--accent) ${colorScheme === "light" ? 10 : 18}%, var(--card));
+  --annotation-border: color-mix(in srgb, var(--accent) ${colorScheme === "light" ? 25 : 35}%, var(--card));
   --warning: ${palette.warning};
   --error: ${palette.error};
   --success: ${palette.success};
@@ -242,9 +244,9 @@ body {
 #preview-root .annotation-marker {
   display: inline;
   padding: 0.06em 0.28em;
-  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--card));
+  border: 1px solid var(--annotation-border);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--warning) 15%, var(--card));
+  background: var(--annotation-bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   font-weight: normal;
